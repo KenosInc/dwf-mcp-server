@@ -11,7 +11,7 @@
     "--rm",
     "--privileged",
     "--env-file",
-    ".devcontainer/.env"
+    ".env"
   ],
   "mounts": [
     "source=dwf-mcp-server-uv-cache,target=/home/vscode/.cache/uv,type=volume",
