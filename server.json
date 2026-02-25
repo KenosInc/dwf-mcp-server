@@ -1,0 +1,8 @@
+{
+  "name": "io.github.KenosInc/dwf-mcp-server",
+  "title": "Digilent WaveForms MCP Server",
+  "version": "0.1.0",
+  "description": "MCP server for Digilent WaveForms instruments (oscilloscope, AWG, logic analyzer).",
+  "repository": "https://github.com/KenosInc/dwf-mcp-server",
+  "container_image": "ghcr.io/kenosinc/dwf-mcp-server:main"
+}

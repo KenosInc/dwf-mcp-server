@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install ruff
+        run: pip install --no-cache-dir ruff
+
+      - name: Check formatting
+        run: ruff format --check .
+
+      - name: Check lint
+        run: ruff check .
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install uv
+        run: pip install --no-cache-dir uv
+
+      - name: Install package with dev extras
+        run: uv pip install --system -e ".[dev]"
+
+      - name: Run tests
+        run: pytest tests/ -v --tb=short
+
+  docker:
+    name: Docker build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image (smoke test)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: dwf-mcp-server:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
