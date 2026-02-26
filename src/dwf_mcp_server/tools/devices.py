@@ -1,11 +1,6 @@
 """Device discovery and information tools for Digilent WaveForms."""
 
-from __future__ import annotations
-
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from fastmcp import FastMCP
+from fastmcp import FastMCP
 
 
 def list_devices() -> list[dict]:

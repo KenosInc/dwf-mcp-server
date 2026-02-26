@@ -1,14 +1,11 @@
 """Analog instrument tools (oscilloscope, AWG, measurement) for Digilent WaveForms."""
 
-from __future__ import annotations
-
 import math
 import statistics
 import time
-from typing import TYPE_CHECKING, Literal
+from typing import Literal
 
-if TYPE_CHECKING:
-    from fastmcp import FastMCP
+from fastmcp import FastMCP
 
 
 def analog_capture(

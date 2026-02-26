@@ -1,7 +1,5 @@
 """Tests for dwf-mcp-server tools."""
 
-from __future__ import annotations
-
 import asyncio
 import importlib
 import math
