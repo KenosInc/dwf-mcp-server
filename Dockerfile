@@ -5,7 +5,7 @@ WORKDIR /build
 
 RUN pip install --no-cache-dir uv
 
-COPY pyproject.toml .
+COPY pyproject.toml README.md ./
 COPY src/ src/
 
 # Install into the system Python so we can copy site-packages cleanly
