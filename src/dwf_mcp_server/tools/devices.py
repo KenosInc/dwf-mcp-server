@@ -1,5 +1,6 @@
 """Device discovery and information tools for Digilent WaveForms."""
 
+import dwfpy as dwf
 from fastmcp import FastMCP
 
 
@@ -13,8 +14,6 @@ def list_devices() -> list[dict]:
     - is_open: whether the device is currently opened by another process
     """
     try:
-        import dwfpy as dwf  # noqa: PLC0415
-
         return [
             {
                 "index": i,
@@ -24,8 +23,6 @@ def list_devices() -> list[dict]:
             }
             for i, info in enumerate(dwf.Device.enumerate())
         ]
-    except OSError as exc:
-        return [{"error": f"Failed to load libdwf: {exc}. Mount libdwf.so from the host."}]
     except Exception as exc:  # noqa: BLE001
         return [{"error": str(exc)}]
 
@@ -37,8 +34,6 @@ def device_info(device_index: int = 0) -> dict:
         device_index: Index of the device to query (default: 0, the first device).
     """
     try:
-        import dwfpy as dwf  # noqa: PLC0415
-
         device_list = list(dwf.Device.enumerate())
         if not device_list:
             return {"error": "No Digilent WaveForms devices found."}
@@ -56,8 +51,6 @@ def device_info(device_index: int = 0) -> dict:
             "serial": info.serial_number,
             "is_open": info.is_open,
         }
-    except OSError as exc:
-        return {"error": f"Failed to load libdwf: {exc}. Mount libdwf.so from the host."}
     except Exception as exc:  # noqa: BLE001
         return {"error": str(exc)}
 

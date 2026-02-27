@@ -37,7 +37,7 @@ class TestListDevices:
         dwf_mock = MagicMock()
         dwf_mock.Device.enumerate.return_value = [_make_device_info()]
 
-        with patch.dict("sys.modules", {"dwfpy": dwf_mock}):
+        with patch("dwf_mcp_server.tools.devices.dwf", dwf_mock):
             result = list_devices()
 
         assert isinstance(result, list)
@@ -47,25 +47,12 @@ class TestListDevices:
         assert result[0]["serial"] == "SN12345"
         assert result[0]["is_open"] is False
 
-    def test_returns_error_when_libdwf_missing(self) -> None:
-        """Returns an error entry when libdwf.so cannot be loaded."""
-        dwf_mock = MagicMock()
-        dwf_mock.Device.enumerate.side_effect = OSError("libdwf.so: cannot open shared object")
-
-        with patch.dict("sys.modules", {"dwfpy": dwf_mock}):
-            result = list_devices()
-
-        assert isinstance(result, list)
-        assert len(result) == 1
-        assert "error" in result[0]
-        assert "libdwf" in result[0]["error"]
-
     def test_returns_empty_list_when_no_devices(self) -> None:
         """Returns an empty list when no devices are connected."""
         dwf_mock = MagicMock()
         dwf_mock.Device.enumerate.return_value = []
 
-        with patch.dict("sys.modules", {"dwfpy": dwf_mock}):
+        with patch("dwf_mcp_server.tools.devices.dwf", dwf_mock):
             result = list_devices()
 
         assert result == []
@@ -82,7 +69,7 @@ class TestDeviceInfo:
         dwf_mock = MagicMock()
         dwf_mock.Device.enumerate.return_value = [_make_device_info()]
 
-        with patch.dict("sys.modules", {"dwfpy": dwf_mock}):
+        with patch("dwf_mcp_server.tools.devices.dwf", dwf_mock):
             result = device_info(device_index=0)
 
         assert result["index"] == 0
@@ -94,7 +81,7 @@ class TestDeviceInfo:
         dwf_mock = MagicMock()
         dwf_mock.Device.enumerate.return_value = [_make_device_info()]
 
-        with patch.dict("sys.modules", {"dwfpy": dwf_mock}):
+        with patch("dwf_mcp_server.tools.devices.dwf", dwf_mock):
             result = device_info(device_index=5)
 
         assert "error" in result
@@ -105,21 +92,10 @@ class TestDeviceInfo:
         dwf_mock = MagicMock()
         dwf_mock.Device.enumerate.return_value = []
 
-        with patch.dict("sys.modules", {"dwfpy": dwf_mock}):
+        with patch("dwf_mcp_server.tools.devices.dwf", dwf_mock):
             result = device_info()
 
         assert "error" in result
-
-    def test_returns_error_when_libdwf_missing(self) -> None:
-        """Returns an error when libdwf.so cannot be loaded."""
-        dwf_mock = MagicMock()
-        dwf_mock.Device.enumerate.side_effect = OSError("libdwf.so: cannot open shared object")
-
-        with patch.dict("sys.modules", {"dwfpy": dwf_mock}):
-            result = device_info()
-
-        assert "error" in result
-        assert "libdwf" in result["error"]
 
 
 # ---------------------------------------------------------------------------
@@ -172,75 +148,6 @@ class TestComputeMeasurement:
         value, unit = self.compute(samples, "period", sample_rate)
         assert math.isclose(value, 0.001, rel_tol=0.02)
         assert unit == "s"
-
-
-# ---------------------------------------------------------------------------
-# analog.analog_capture (error path)
-# ---------------------------------------------------------------------------
-
-
-class TestAnalogCapture:
-    def test_returns_error_when_libdwf_missing(self) -> None:
-        """Returns an error dict when libdwf.so cannot be loaded."""
-        dwf_mock = MagicMock()
-        dwf_mock.Device.side_effect = OSError("libdwf.so: cannot open shared object")
-
-        with patch.dict("sys.modules", {"dwfpy": dwf_mock}):
-            result = analog_capture()
-
-        assert "error" in result
-        assert "libdwf" in result["error"]
-
-
-# ---------------------------------------------------------------------------
-# analog.generate_waveform (error path)
-# ---------------------------------------------------------------------------
-
-
-class TestGenerateWaveform:
-    def test_returns_error_when_libdwf_missing(self) -> None:
-        dwf_mock = MagicMock()
-        dwf_mock.Device.side_effect = OSError("libdwf.so: cannot open shared object")
-
-        with patch.dict("sys.modules", {"dwfpy": dwf_mock}):
-            result = generate_waveform()
-
-        assert "error" in result
-        assert "libdwf" in result["error"]
-
-
-# ---------------------------------------------------------------------------
-# analog.measure (error path)
-# ---------------------------------------------------------------------------
-
-
-class TestMeasure:
-    def test_returns_error_when_libdwf_missing(self) -> None:
-        dwf_mock = MagicMock()
-        dwf_mock.Device.side_effect = OSError("libdwf.so: cannot open shared object")
-
-        with patch.dict("sys.modules", {"dwfpy": dwf_mock}):
-            result = measure()
-
-        assert "error" in result
-        assert "libdwf" in result["error"]
-
-
-# ---------------------------------------------------------------------------
-# digital.digital_capture (error path)
-# ---------------------------------------------------------------------------
-
-
-class TestDigitalCapture:
-    def test_returns_error_when_libdwf_missing(self) -> None:
-        dwf_mock = MagicMock()
-        dwf_mock.Device.side_effect = OSError("libdwf.so: cannot open shared object")
-
-        with patch.dict("sys.modules", {"dwfpy": dwf_mock}):
-            result = digital_capture()
-
-        assert "error" in result
-        assert "libdwf" in result["error"]
 
 
 # ---------------------------------------------------------------------------

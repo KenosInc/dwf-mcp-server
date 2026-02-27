@@ -2,6 +2,7 @@
 
 import time
 
+import dwfpy as dwf
 from fastmcp import FastMCP
 
 
@@ -25,8 +26,6 @@ def digital_capture(
         Bit 0 of each sample corresponds to channel 0, bit 1 to channel 1, etc.
     """
     try:
-        import dwfpy as dwf  # noqa: PLC0415
-
         buffer_size = int(sample_rate * duration)
 
         with dwf.Device(device_id=device_index) as device:
@@ -58,8 +57,6 @@ def digital_capture(
             "sample_count": len(filtered),
             "samples": filtered,
         }
-    except OSError as exc:
-        return {"error": f"Failed to load libdwf: {exc}. Mount libdwf.so from the host."}
     except Exception as exc:  # noqa: BLE001
         return {"error": str(exc)}
 

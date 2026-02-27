@@ -5,6 +5,7 @@ import statistics
 import time
 from typing import Literal
 
+import dwfpy as dwf
 from fastmcp import FastMCP
 
 
@@ -28,8 +29,6 @@ def analog_capture(
         Dictionary with 'samples' (list of floats in Volts) and metadata.
     """
     try:
-        import dwfpy as dwf  # noqa: PLC0415
-
         buffer_size = int(sample_rate * duration)
         ch_idx = channel - 1  # dwfpy uses 0-based channel indexing
 
@@ -56,8 +55,6 @@ def analog_capture(
             "unit": "V",
             "samples": samples,
         }
-    except OSError as exc:
-        return {"error": f"Failed to load libdwf: {exc}. Mount libdwf.so from the host."}
     except Exception as exc:  # noqa: BLE001
         return {"error": str(exc)}
 
@@ -84,8 +81,6 @@ def generate_waveform(
         device_index: Device index (default: 0, the first device).
     """
     try:
-        import dwfpy as dwf  # noqa: PLC0415
-
         ch_idx = channel - 1
 
         with dwf.Device(device_id=device_index) as device:
@@ -109,8 +104,6 @@ def generate_waveform(
             "offset": offset,
             "duration": duration if duration > 0 else "continuous",
         }
-    except OSError as exc:
-        return {"error": f"Failed to load libdwf: {exc}. Mount libdwf.so from the host."}
     except Exception as exc:  # noqa: BLE001
         return {"error": str(exc)}
 
@@ -133,8 +126,6 @@ def measure(
         device_index: Device index (default: 0, the first device).
     """
     try:
-        import dwfpy as dwf  # noqa: PLC0415
-
         buffer_size = int(sample_rate * duration)
         ch_idx = channel - 1
 
@@ -155,8 +146,6 @@ def measure(
 
         value, unit = _compute_measurement(samples, measurement, sample_rate)
         return {"channel": channel, "measurement": measurement, "value": value, "unit": unit}
-    except OSError as exc:
-        return {"error": f"Failed to load libdwf: {exc}. Mount libdwf.so from the host."}
     except Exception as exc:  # noqa: BLE001
         return {"error": str(exc)}
 
