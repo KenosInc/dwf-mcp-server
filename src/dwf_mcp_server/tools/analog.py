@@ -34,13 +34,12 @@ def analog_capture(
 
         with dwf.Device(device_id=device_index) as device:
             scope = device.analog_input
-            scope.setup(sample_rate=sample_rate, buffer_size=buffer_size)
-            scope[ch_idx].setup(range=voltage_range, enable=True)
-            scope.single()
+            scope[ch_idx].setup(range=voltage_range, enabled=True)
+            scope.setup_acquisition(sample_rate=sample_rate, buffer_size=buffer_size, start=True)
 
             timeout = max(duration * 10, 5.0)
             deadline = time.monotonic() + timeout
-            while not scope.is_done():
+            while scope.read_status(read_data=True) != dwf.Status.DONE:
                 if time.monotonic() > deadline:
                     return {"error": "Capture timed out."}
                 time.sleep(0.001)
@@ -61,7 +60,7 @@ def analog_capture(
 
 def generate_waveform(
     channel: int = 1,
-    waveform: Literal["sine", "square", "triangle", "dc", "noise", "rampup", "rampdown"] = "sine",
+    waveform: Literal["sine", "square", "triangle", "dc", "noise", "ramp-up", "ramp-down"] = "sine",
     frequency: float = 1000.0,
     amplitude: float = 1.0,
     offset: float = 0.0,
@@ -72,7 +71,7 @@ def generate_waveform(
 
     Args:
         channel: AWG channel number (1 or 2, default: 1).
-        waveform: Waveform type: sine, square, triangle, dc, noise, rampup, rampdown
+        waveform: Waveform type: sine, square, triangle, dc, noise, ramp-up, ramp-down
             (default: "sine").
         frequency: Signal frequency in Hz (default: 1000 Hz).
         amplitude: Signal amplitude in Volts peak (default: 1 V).
@@ -131,13 +130,12 @@ def measure(
 
         with dwf.Device(device_id=device_index) as device:
             scope = device.analog_input
-            scope.setup(sample_rate=sample_rate, buffer_size=buffer_size)
-            scope[ch_idx].setup(enable=True)
-            scope.single()
+            scope[ch_idx].setup(enabled=True)
+            scope.setup_acquisition(sample_rate=sample_rate, buffer_size=buffer_size, start=True)
 
             timeout = max(duration * 10, 5.0)
             deadline = time.monotonic() + timeout
-            while not scope.is_done():
+            while scope.read_status(read_data=True) != dwf.Status.DONE:
                 if time.monotonic() > deadline:
                     return {"error": "Measurement timed out."}
                 time.sleep(0.001)
