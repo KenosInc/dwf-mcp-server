@@ -24,16 +24,18 @@ ARG WAVEFORMS_VERSION=3.24.4
 RUN ARCH="$(dpkg --print-architecture)" \
     && apt-get update \
     && apt-get install -y --no-install-recommends curl \
-    # Stub out xdg-desktop-menu so the WaveForms post-install script
-    # succeeds in this headless container (no desktop environment).
-    && printf '#!/bin/sh\nexit 0\n' > /usr/local/bin/xdg-desktop-menu \
-    && chmod +x /usr/local/bin/xdg-desktop-menu \
     && curl -fsSL "https://files.digilent.com/Software/Adept2%20Runtime/${ADEPT_VERSION}/digilent.adept.runtime_${ADEPT_VERSION}-${ARCH}.deb" \
        -o /tmp/adept-runtime.deb \
     && curl -fsSL "https://files.digilent.com/Software/Waveforms/${WAVEFORMS_VERSION}/digilent.waveforms_${WAVEFORMS_VERSION}_${ARCH}.deb" \
        -o /tmp/waveforms.deb \
-    && apt-get install -y --no-install-recommends /tmp/adept-runtime.deb /tmp/waveforms.deb \
-    && rm -f /usr/local/bin/xdg-desktop-menu \
+    # The WaveForms post-install script calls xdg-desktop-menu to register
+    # desktop shortcuts, which fails in headless containers.  Allow the
+    # initial install to fail, then stub out xdg-desktop-menu and re-run
+    # dpkg --configure to finish setup.
+    && (apt-get install -y --no-install-recommends /tmp/adept-runtime.deb /tmp/waveforms.deb || true) \
+    && printf '#!/bin/sh\nexit 0\n' > /usr/bin/xdg-desktop-menu \
+    && chmod +x /usr/bin/xdg-desktop-menu \
+    && dpkg --configure -a \
     && apt-get purge -y curl \
     && apt-get autoremove -y \
     && rm -f /tmp/adept-runtime.deb /tmp/waveforms.deb \
@@ -48,9 +50,6 @@ RUN PY_SITE=$(python3 -c 'import sysconfig; print(sysconfig.get_path("purelib"))
  && cp -a /opt/site-packages/* "$PY_SITE"/ \
  && rm -rf /opt/site-packages
 
-# No volume mounts needed — Adept 2 Runtime, WaveForms SDK (libdwf.so),
-# and device firmware are all installed above.
-#
 # Example:
 #   docker run -i --rm --privileged ghcr.io/kenosinc/dwf-mcp-server
 
