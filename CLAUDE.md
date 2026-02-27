@@ -5,8 +5,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What This Is
 
 MCP server for Digilent WaveForms instruments (oscilloscope, AWG, logic analyzer). Built with
-Python, `fastmcp` v3, and `dwfpy`. Deployed as a Docker image; the proprietary `libdwf.so` is
-added by users via a derived Dockerfile layer.
+Python, `fastmcp` v3, and `dwfpy`. Deployed as a Docker image; the proprietary Digilent
+libraries (Adept 2 Runtime, `libdwf.so`) are added by users via a derived Dockerfile layer.
 
 ## Commands
 
