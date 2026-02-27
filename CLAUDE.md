@@ -11,6 +11,10 @@ volume-mounted from the host at runtime.
 ## Commands
 
 ```bash
+# GitHub milestone operations (no `gh milestone` command exists)
+gh api repos/{owner}/{repo}/milestones                                       # list
+gh api repos/{owner}/{repo}/milestones -f title="..." -f description="..."   # create
+
 # Install for development
 uv pip install -e ".[dev]"
 
@@ -77,6 +81,7 @@ startup — this is intentional for container deployments (users must volume-mou
 
 ## Coding Conventions
 
+- **Language**: all GitHub issues, PRs, milestones, and commit messages must be written in English
 - **Formatter/linter**: ruff (line-length 100, configured in `pyproject.toml`)
 - **Type annotations**: all public functions must have fully-annotated signatures
 - **Return types**: MCP tools return `dict` or `list[dict]`
