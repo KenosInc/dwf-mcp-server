@@ -5,8 +5,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What This Is
 
 MCP server for Digilent WaveForms instruments (oscilloscope, AWG, logic analyzer). Built with
-Python, `fastmcp` v3, and `dwfpy`. Deployed as a Docker image; the proprietary `libdwf.so` is
-volume-mounted from the host at runtime.
+Python, `fastmcp` v3, and `dwfpy`. Deployed as a Docker image; the proprietary Digilent
+libraries (Adept 2 Runtime, `libdwf.so`) are added by users via a derived Dockerfile layer.
 
 ## Commands
 
@@ -74,9 +74,9 @@ sample buffer, measure the time span between first and last crossing, then deriv
 
 ## libdwf Constraint
 
-**Never commit `.so` files to the repository.** The Dockerfile downloads the Adept 2 Runtime and
-WaveForms SDK (which includes `libdwf.so`) at build time from `files.digilent.com`. No host-side
-volume mounts are needed at runtime.
+**Never commit `.so` files to the repository.** The Digilent Adept 2 Runtime and WaveForms SDK
+(`libdwf.so`) are proprietary — users install them via a derived Dockerfile layer. The public
+Docker image includes only their system-level dependencies (e.g. `libusb-1.0-0`).
 
 ## Coding Conventions
 

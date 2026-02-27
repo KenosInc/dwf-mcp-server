@@ -57,11 +57,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Create libdwf stub for bind mount
-        run: |
-          sudo mkdir -p /run/current-system/sw/lib
-          sudo touch /run/current-system/sw/lib/libdwf.so
-
       - name: Create .env (required by --env-file)
         run: touch .env
 
