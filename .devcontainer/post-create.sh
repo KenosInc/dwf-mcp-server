@@ -38,7 +38,7 @@ yamllint --version
 gh --version
 node --version
 markdownlint-cli2 --version
-python3 -c "import dwf_mcp_server.server" 2>/dev/null && echo "dwf-mcp-server: ok" || echo "dwf-mcp-server: import failed (libdwf not mounted?)"
+python3 -c "import dwf_mcp_server.server" 2>/dev/null && echo "dwf-mcp-server: ok" || echo "dwf-mcp-server: import failed (check libdwf installation)"
 
 # Check uv cache volume permissions
 if [ ! -w /home/vscode/.cache/uv ]; then

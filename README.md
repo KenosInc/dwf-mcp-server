@@ -12,20 +12,58 @@ instruments — oscilloscope, arbitrary waveform generator (AWG), and logic anal
 
 ## Prerequisites
 
-The Docker image bundles the Digilent Adept 2 Runtime and WaveForms SDK
-(`libdwf.so` + device firmware). No host-side SDK installation or volume
-mounts are required — just Docker and a USB-connected device.
+- **Docker** installed on the host machine.
+- **No host-side WaveForms SDK installation is required.** The proprietary `libdwf.so` is added
+  via a derived Dockerfile layer (see [Installation](#installation)).
 
 ## Installation
 
-### Claude Code
+The public Docker image **does not bundle any Digilent proprietary software**
+(Adept 2 Runtime, WaveForms SDK / `libdwf.so`). You must create a derived image
+that adds them.
 
-```bash
-claude mcp add dwf -- docker run -i --rm --privileged \
-  ghcr.io/kenosinc/dwf-mcp-server
+### 1. Create a derived Dockerfile
+
+Create a file named `Dockerfile.dwf`:
+
+```dockerfile
+FROM ghcr.io/kenosinc/dwf-mcp-server:latest
+
+ARG ADEPT_VERSION=2.27.9
+ARG WAVEFORMS_VERSION=3.24.4
+RUN ARCH="$(dpkg --print-architecture)" \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends curl \
+    && curl -fsSL "https://files.digilent.com/Software/Adept2%20Runtime/${ADEPT_VERSION}/digilent.adept.runtime_${ADEPT_VERSION}-${ARCH}.deb" \
+       -o /tmp/adept-runtime.deb \
+    && curl -fsSL "https://files.digilent.com/Software/Waveforms/${WAVEFORMS_VERSION}/digilent.waveforms_${WAVEFORMS_VERSION}_${ARCH}.deb" \
+       -o /tmp/waveforms.deb \
+    && (apt-get install -y --no-install-recommends /tmp/adept-runtime.deb /tmp/waveforms.deb || true) \
+    && for cmd in xdg-desktop-menu xdg-icon-resource xdg-mime; do \
+         printf '#!/bin/sh\nexit 0\n' > "/usr/bin/$cmd" && chmod +x "/usr/bin/$cmd"; \
+       done \
+    && dpkg --configure -a \
+    && apt-get purge -y curl \
+    && apt-get autoremove -y \
+    && rm -f /tmp/adept-runtime.deb /tmp/waveforms.deb \
+    && rm -rf /var/lib/apt/lists/*
 ```
 
-### Claude Desktop
+### 2. Build the image
+
+```bash
+docker build -f Dockerfile.dwf -t dwf-mcp-server .
+```
+
+### 3. Configure your MCP client
+
+#### Claude Code
+
+```bash
+claude mcp add dwf -- docker run -i --rm --privileged dwf-mcp-server
+```
+
+#### Claude Desktop
 
 Add to `claude_desktop_config.json`:
 
@@ -37,23 +75,14 @@ Add to `claude_desktop_config.json`:
       "args": [
         "run", "-i", "--rm",
         "--privileged",
-        "ghcr.io/kenosinc/dwf-mcp-server"
+        "dwf-mcp-server"
       ]
     }
   }
 }
 ```
 
-### Docker (direct)
-
-```bash
-docker pull ghcr.io/kenosinc/dwf-mcp-server
-```
-
-## Usage
-
 Pass `--privileged` so the container can access USB devices.
-All required libraries and firmware are bundled in the image.
 
 ## Available MCP Tools
 
@@ -62,7 +91,7 @@ All required libraries and firmware are bundled in the image.
 | `list_devices` | List all connected Digilent WaveForms devices |
 | `device_info` | Get detailed information about a specific device |
 | `analog_capture` | Capture analog waveform samples (oscilloscope) |
-| `generate_waveform` | Generate an analog signal (AWG): sine, square, triangle, … |
+| `generate_waveform` | Generate an analog signal (AWG): sine, square, triangle, ... |
 | `measure` | Measure DC voltage, RMS, frequency, period, or peak-to-peak |
 | `digital_capture` | Capture digital logic signals (logic analyzer) |
 | `spi_transfer` | Send and receive data over SPI using the digital protocol interface |

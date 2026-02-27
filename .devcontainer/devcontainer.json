@@ -16,11 +16,7 @@
   "mounts": [
     "source=dwf-mcp-server-uv-cache,target=/home/vscode/.cache/uv,type=volume",
     "source=claude,target=/home/vscode/.claude,type=volume",
-    "source=gh,target=/home/vscode/.config/gh,type=volume",
-    // libdwf is proprietary — bind-mount from the host.
-    // Adept Runtime dependencies are installed via Dockerfile.
-    // On Debian/Ubuntu hosts, change source path to /usr/lib/libdwf.so.
-    "source=/run/current-system/sw/lib/libdwf.so,target=/usr/lib/libdwf.so,type=bind,readonly"
+    "source=gh,target=/home/vscode/.config/gh,type=volume"
   ],
   "features": {
     "ghcr.io/devcontainers/features/github-cli:1": {},

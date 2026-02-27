@@ -1,50 +1,14 @@
-# Host Setup: libdwf Installation & AD3 Verification
+# Host Setup: AD3 Verification
 
-Step-by-step guide to install the WaveForms SDK on the host
-machine and verify that an Analog Discovery 3 (AD3) is recognized
+Step-by-step guide to verify that an Analog Discovery 3 (AD3) is recognized
 and usable by `dwf-mcp-server`.
 
-> **Note:** The Docker image bundles the WaveForms SDK (`libdwf.so`)
-> and Adept 2 Runtime. No host-side installation is needed for
-> Docker usage. The steps below are only needed for **local
-> (non-Docker) development**.
+> **Note:** The Digilent Adept 2 Runtime and WaveForms SDK (`libdwf.so`) are
+> proprietary and not included in the public Docker image. Users add them by
+> building a derived Dockerfile — see the [README](../README.md#installation)
+> for instructions.
 
-## 1. Install WaveForms SDK
-
-### Linux (Debian/Ubuntu)
-
-Download the latest `.deb` package from the
-[Digilent WaveForms download page](https://digilent.com/reference/software/waveforms/waveforms-3/start),
-then install:
-
-```bash
-sudo dpkg -i digilent.waveforms_*.deb
-sudo apt-get install -f   # resolve dependencies if needed
-```
-
-### NixOS
-
-If you are using NixOS, the libraries are available under the system profile:
-
-```text
-/run/current-system/sw/lib/libdwf.so
-/run/current-system/sw/lib/libdmgr.so.2
-/run/current-system/sw/lib/libdmgt.so.2
-/run/current-system/sw/lib/libdjtg.so.2
-```
-
-### Verify libdwf
-
-Confirm `libdwf.so` is present (Adept Runtime dependencies are installed
-inside the Docker image, so only `libdwf.so` needs to exist on the host):
-
-```bash
-ls -l /usr/lib/libdwf.so
-```
-
-On NixOS, check `/run/current-system/sw/lib/libdwf.so` instead.
-
-## 2. Connect and Check USB Device
+## 1. Connect and Check USB Device
 
 Plug in the AD3, then verify it appears on the USB bus:
 
@@ -63,9 +27,9 @@ sudo usermod -aG plugdev $USER
 # Option B: run with sudo (not recommended for production)
 ```
 
-## 3. Quick Smoke Test with Python (no Docker)
+## 2. Quick Smoke Test with Python (no Docker)
 
-In a virtual environment with `dwfpy` installed:
+Install the WaveForms SDK on the host, then in a virtual environment with `dwfpy`:
 
 ```bash
 python3 -c "
@@ -79,7 +43,7 @@ for d in devices:
 
 You should see at least one device listed.
 
-## 4. Run dwf-mcp-server Locally (no Docker)
+## 3. Run dwf-mcp-server Locally (no Docker)
 
 ```bash
 cd /path/to/dwf-mcp-server
@@ -88,18 +52,22 @@ dwf-mcp-server
 # Server should start on stdio without errors
 ```
 
-## 5. Run via Docker
+## 4. Run via Docker (Derived Image)
+
+First, build a derived image with the Adept 2 Runtime and WaveForms SDK — see
+[README](../README.md#installation).
 
 ```bash
-docker run -i --rm --privileged ghcr.io/kenosinc/dwf-mcp-server
+docker run -i --rm --privileged dwf-mcp-server
 ```
 
-## 6. Verify with list_devices MCP Tool
+## 5. Verify with list_devices MCP Tool
 
 Call `list_devices` via your MCP client and confirm the AD3 appears in the response.
 
 ## Checklist
 
 - [ ] `lsusb` shows the AD3
-- [ ] `docker run --privileged ghcr.io/kenosinc/dwf-mcp-server` starts without errors
+- [ ] `dwfpy` enumerate returns at least 1 device
+- [ ] `dwf-mcp-server` starts without import errors
 - [ ] `list_devices` tool returns the AD3 info
