@@ -1,0 +1,1 @@
+"""Digilent WaveForms MCP Server."""

@@ -1,0 +1,64 @@
+{
+  "name": "dwf-mcp-server",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  // --privileged is required for access to USB devices (/dev/bus/usb) used
+  // by Digilent WaveForms instruments.
+  "runArgs": [
+    "--name",
+    "dwf-mcp-server",
+    "--rm",
+    "--privileged",
+    "--env-file",
+    ".env"
+  ],
+  "mounts": [
+    "source=dwf-mcp-server-uv-cache,target=/home/vscode/.cache/uv,type=volume",
+    "source=claude,target=/home/vscode/.claude,type=volume",
+    "source=gh,target=/home/vscode/.config/gh,type=volume"
+  ],
+  "features": {
+    "ghcr.io/devcontainers/features/github-cli:1": {},
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {},
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "lts"
+    },
+    "ghcr.io/anthropics/devcontainer-features/claude-code:1.0": {}
+  },
+  "remoteEnv": {
+    "PATH": "${containerEnv:HOME}/.local/bin:${containerEnv:PATH}"
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "charliermarsh.ruff",
+        "redhat.vscode-yaml",
+        "ms-azuretools.vscode-docker",
+        "github.vscode-github-actions",
+        "editorconfig.editorconfig",
+        "DavidAnson.vscode-markdownlint"
+      ],
+      "settings": {
+        "[python]": {
+          "editor.defaultFormatter": "charliermarsh.ruff",
+          "editor.formatOnSave": true,
+          "editor.codeActionsOnSave": {
+            "source.fixAll.ruff": "explicit",
+            "source.organizeImports.ruff": "explicit"
+          }
+        },
+        "ruff.lint.enable": true,
+        "editor.formatOnSave": true,
+        "files.eol": "\n",
+        "files.insertFinalNewline": true,
+        "files.trimTrailingWhitespace": true,
+        "yaml.schemaStore.enable": true,
+        "yaml.format.enable": true
+      }
+    }
+  },
+  "remoteUser": "vscode",
+  "postCreateCommand": "bash .devcontainer/post-create.sh"
+}

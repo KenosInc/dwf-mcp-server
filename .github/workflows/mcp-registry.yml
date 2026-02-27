@@ -1,0 +1,29 @@
+name: MCP Registry Publish
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  publish:
+    name: Publish to MCP Registry
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Update server.json version and image tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          IMAGE="ghcr.io/${{ github.repository }}:${VERSION}"
+          jq --arg v "$VERSION" --arg img "$IMAGE" \
+            '.version = $v | .container_image = $img' server.json > server.json.tmp
+          mv server.json.tmp server.json
+
+      - name: Publish to MCP Registry
+        uses: modelcontextprotocol/publish-server-action@v1
+        with:
+          server_path: server.json
