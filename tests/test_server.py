@@ -357,6 +357,15 @@ class TestAnalogCapture:
         assert "error" in result
         assert "timed out" in result["error"].lower()
 
+    def test_device_index_forwarded(self) -> None:
+        """Non-default device_index is forwarded to dwf.Device."""
+        dwf_mock = self._make_dwf_mock()
+
+        with patch("dwf_mcp_server.tools.analog.dwf", dwf_mock):
+            analog_capture(device_index=2)
+
+        dwf_mock.Device.assert_called_once_with(device_id=2)
+
     def test_device_exception_returns_error(self) -> None:
         """Device open exception is caught and returned as error dict."""
         dwf_mock = MagicMock()
@@ -477,6 +486,19 @@ class TestMeasure:
         assert result["channel"] == 1
         assert result["measurement"] == "dc"
         assert result["value"] == 2.0
+        assert result["unit"] == "V"
+
+    def test_rms_integration(self) -> None:
+        """Measure with measurement='rms' flows through _compute_measurement correctly."""
+        # mean([1,-1,1,-1]) = 0.0, but RMS = 1.0 — distinguishes dc from rms
+        dwf_mock = self._make_dwf_mock([1.0, -1.0, 1.0, -1.0])
+
+        with patch("dwf_mcp_server.tools.analog.dwf", dwf_mock):
+            result = measure(channel=1, measurement="rms")
+
+        assert "error" not in result
+        assert result["measurement"] == "rms"
+        assert math.isclose(result["value"], 1.0, rel_tol=1e-9)
         assert result["unit"] == "V"
 
     def test_setup_no_voltage_range(self) -> None:
