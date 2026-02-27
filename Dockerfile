@@ -24,11 +24,16 @@ ARG WAVEFORMS_VERSION=3.24.4
 RUN ARCH="$(dpkg --print-architecture)" \
     && apt-get update \
     && apt-get install -y --no-install-recommends curl \
+    # Stub out xdg-desktop-menu so the WaveForms post-install script
+    # succeeds in this headless container (no desktop environment).
+    && printf '#!/bin/sh\nexit 0\n' > /usr/local/bin/xdg-desktop-menu \
+    && chmod +x /usr/local/bin/xdg-desktop-menu \
     && curl -fsSL "https://files.digilent.com/Software/Adept2%20Runtime/${ADEPT_VERSION}/digilent.adept.runtime_${ADEPT_VERSION}-${ARCH}.deb" \
        -o /tmp/adept-runtime.deb \
     && curl -fsSL "https://files.digilent.com/Software/Waveforms/${WAVEFORMS_VERSION}/digilent.waveforms_${WAVEFORMS_VERSION}_${ARCH}.deb" \
        -o /tmp/waveforms.deb \
     && apt-get install -y --no-install-recommends /tmp/adept-runtime.deb /tmp/waveforms.deb \
+    && rm -f /usr/local/bin/xdg-desktop-menu \
     && apt-get purge -y curl \
     && apt-get autoremove -y \
     && rm -f /tmp/adept-runtime.deb /tmp/waveforms.deb \
