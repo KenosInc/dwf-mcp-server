@@ -74,10 +74,9 @@ sample buffer, measure the time span between first and last crossing, then deriv
 
 ## libdwf Constraint
 
-**libdwf is proprietary — never commit `.so` files or bundle them in the Docker image.**
-
-Tool modules import `dwfpy` at the top level. If `libdwf.so` is missing, the server fails at
-startup — this is intentional for container deployments (users must volume-mount the library).
+**Never commit `.so` files to the repository.** The Dockerfile downloads the Adept 2 Runtime and
+WaveForms SDK (which includes `libdwf.so`) at build time from `files.digilent.com`. No host-side
+volume mounts are needed at runtime.
 
 ## Coding Conventions
 
