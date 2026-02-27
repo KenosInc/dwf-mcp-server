@@ -9,9 +9,7 @@ from fastmcp import FastMCP
 
 import dwf_mcp_server.server as srv
 import dwf_mcp_server.tools.analog as analog_mod
-from dwf_mcp_server.tools.analog import analog_capture, generate_waveform, measure
 from dwf_mcp_server.tools.devices import device_info, list_devices
-from dwf_mcp_server.tools.digital import digital_capture
 
 
 def _make_device_info(
