@@ -16,6 +16,9 @@ RUN ARCH="$(dpkg --print-architecture)" \
     && rm -f /tmp/adept-runtime.deb \
     && rm -rf /var/lib/apt/lists/*
 
+# Allow vscode user to access USB devices (owned by root:root in the container)
+RUN usermod -aG root vscode
+
 # Install uv (fast Python package manager)
 RUN pip install --no-cache-dir uv
 
