@@ -2,13 +2,14 @@
 
 from fastmcp import FastMCP
 
-from dwf_mcp_server.tools import analog, devices, digital, protocols
+from dwf_mcp_server.tools import analog, devices, digital, gpio, protocols
 
 mcp = FastMCP("dwf-mcp-server")
 
 devices.register(mcp)
 analog.register(mcp)
 digital.register(mcp)
+gpio.register(mcp)
 protocols.register(mcp)
 
 
