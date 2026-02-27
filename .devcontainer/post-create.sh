@@ -23,9 +23,11 @@ fi
 # Install global npm tools
 npm install -g markdownlint-cli2
 
-# Install Python package in editable mode with dev extras
-# --system writes to /usr/local/lib/python3.12/site-packages (root-owned), so sudo is needed
-sudo uv pip install --system -e "/workspaces/dwf-mcp-server[dev]"
+# Create venv and install Python package in editable mode with dev extras
+uv venv /workspaces/dwf-mcp-server/.venv
+# shellcheck disable=SC1091
+source /workspaces/dwf-mcp-server/.venv/bin/activate
+uv pip install -e "/workspaces/dwf-mcp-server[dev]"
 
 # Verify all tools are available
 echo "--- Tool verification ---"
@@ -36,6 +38,7 @@ yamllint --version
 gh --version
 node --version
 markdownlint-cli2 --version
+ruff --version
 python3 -c "import dwf_mcp_server.server" 2>/dev/null && echo "dwf-mcp-server: ok" || echo "dwf-mcp-server: import failed (libdwf not mounted?)"
 
 # Check uv cache volume permissions

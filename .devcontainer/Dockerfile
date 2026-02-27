@@ -22,11 +22,7 @@ RUN usermod -aG root vscode
 # Install uv (fast Python package manager)
 RUN pip install --no-cache-dir uv
 
-# Install ruff (linter / formatter)
-RUN pip install --no-cache-dir ruff
-
 # Smoke tests: fail the build early if any tool is missing
 RUN python3 --version \
     && uv --version \
-    && ruff --version \
     && yamllint --version

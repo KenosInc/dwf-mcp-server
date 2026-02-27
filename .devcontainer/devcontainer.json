@@ -30,7 +30,7 @@
     "ghcr.io/anthropics/devcontainer-features/claude-code:1.0": {}
   },
   "remoteEnv": {
-    "PATH": "${containerEnv:HOME}/.local/bin:${containerEnv:PATH}"
+    "PATH": "/workspaces/dwf-mcp-server/.venv/bin:${containerEnv:HOME}/.local/bin:${containerEnv:PATH}"
   },
   "customizations": {
     "vscode": {
