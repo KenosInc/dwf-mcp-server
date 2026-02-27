@@ -16,6 +16,20 @@ RUN uv pip install --system --no-cache . \
 # Stage 2: runtime — minimal image without build tools
 FROM python:3.14-slim
 
+# Install Digilent Adept 2 Runtime (provides libdmgr, libdpcomm, libdftd2xx, etc.)
+# libdwf.so itself is proprietary and must be bind-mounted from the host.
+ARG ADEPT_VERSION=2.27.9
+RUN ARCH="$(dpkg --print-architecture)" \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends curl \
+    && curl -fsSL "https://files.digilent.com/Software/Adept2%20Runtime/${ADEPT_VERSION}/digilent.adept.runtime_${ADEPT_VERSION}-${ARCH}.deb" \
+       -o /tmp/adept-runtime.deb \
+    && apt-get install -y --no-install-recommends /tmp/adept-runtime.deb \
+    && apt-get purge -y curl \
+    && apt-get autoremove -y \
+    && rm -f /tmp/adept-runtime.deb \
+    && rm -rf /var/lib/apt/lists/*
+
 # Copy installed packages and entry-point script from builder.
 # Site-packages go through a staging path so the COPY is version-agnostic;
 # a RUN step then moves them to the correct Python-version directory.
@@ -25,15 +39,12 @@ RUN PY_SITE=$(python3 -c 'import sysconfig; print(sysconfig.get_path("purelib"))
  && cp -a /opt/site-packages/* "$PY_SITE"/ \
  && rm -rf /opt/site-packages
 
-# libdwf and its dependencies are proprietary and must be mounted from the host.
-# They are NOT included in this image.
+# libdwf.so is proprietary and must be mounted from the host.
+# Adept 2 Runtime (libdmgr, libdmgt, etc.) is already installed above.
 #
 # Example (Linux host with WaveForms SDK installed):
 #   docker run -i --rm \
-#     -v /usr/lib/libdwf.so:/usr/lib/libdwf.so \
-#     -v /usr/lib/libdmgr.so.2:/usr/lib/libdmgr.so.2 \
-#     -v /usr/lib/libdmgt.so.2:/usr/lib/libdmgt.so.2 \
-#     -v /usr/lib/libdjtg.so.2:/usr/lib/libdjtg.so.2 \
+#     -v /usr/lib/libdwf.so:/usr/lib/libdwf.so:ro \
 #     --privileged \
 #     ghcr.io/kenosinc/dwf-mcp-server
 
