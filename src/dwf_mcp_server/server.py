@@ -2,13 +2,14 @@
 
 from fastmcp import FastMCP
 
-from dwf_mcp_server.tools import analog, devices, digital
+from dwf_mcp_server.tools import analog, devices, digital, protocols
 
 mcp = FastMCP("dwf-mcp-server")
 
 devices.register(mcp)
 analog.register(mcp)
 digital.register(mcp)
+protocols.register(mcp)
 
 
 def main() -> None:
