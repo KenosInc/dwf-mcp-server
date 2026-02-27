@@ -13,6 +13,7 @@ from dwf_mcp_server.tools.analog import analog_capture, generate_waveform, measu
 from dwf_mcp_server.tools.devices import device_info, list_devices
 from dwf_mcp_server.tools.digital import digital_capture
 from dwf_mcp_server.tools.gpio import gpio_read, gpio_write
+from dwf_mcp_server.tools.power import power_supply
 from dwf_mcp_server.tools.protocols import spi_transfer
 
 
@@ -187,7 +188,7 @@ class TestServerRegistration:
         assert isinstance(srv.mcp, FastMCP)
 
     def test_tools_registered(self) -> None:
-        """All nine tools are registered on the server."""
+        """All ten tools are registered on the server."""
         tools = asyncio.run(srv.mcp.list_tools())
         tool_names = {t.name for t in tools}
         expected = {
@@ -199,9 +200,102 @@ class TestServerRegistration:
             "digital_capture",
             "gpio_read",
             "gpio_write",
+            "power_supply",
             "spi_transfer",
         }
         assert expected.issubset(tool_names)
+
+
+# ---------------------------------------------------------------------------
+# power.power_supply
+# ---------------------------------------------------------------------------
+
+
+class TestPowerSupply:
+    def _make_dwf_mock(self) -> MagicMock:
+        """Create a dwf mock with analog_io support."""
+        return MagicMock()
+
+    def _get_aio(self, dwf_mock: MagicMock) -> MagicMock:
+        """Get the analog_io mock from the device context."""
+        return dwf_mock.Device.return_value.__enter__.return_value.analog_io
+
+    def test_enable_sets_voltages_and_master(self) -> None:
+        """Enabling sets both channel voltages, enables channels, and master."""
+        dwf_mock = self._make_dwf_mock()
+        aio = self._get_aio(dwf_mock)
+
+        with patch("dwf_mcp_server.tools.power.dwf", dwf_mock):
+            result = power_supply(positive_voltage=3.3, negative_voltage=-3.3, enabled=True)
+
+        assert "error" not in result
+        assert result["enabled"] is True
+        assert result["positive_voltage"] == 3.3
+        assert result["negative_voltage"] == -3.3
+        aio.__getitem__.assert_any_call(0)
+        aio.__getitem__.assert_any_call(1)
+        assert aio.master_enable == True  # noqa: E712
+
+    def test_disable_sets_master_false_and_channel_enables(self) -> None:
+        """Disabling sets channel enables and master_enable to False."""
+        dwf_mock = self._make_dwf_mock()
+        aio = self._get_aio(dwf_mock)
+
+        with patch("dwf_mcp_server.tools.power.dwf", dwf_mock):
+            result = power_supply(enabled=False)
+
+        assert "error" not in result
+        assert result["enabled"] is False
+        assert "positive_voltage" not in result
+        assert "negative_voltage" not in result
+        aio.__getitem__.assert_any_call(0)
+        aio.__getitem__.assert_any_call(1)
+        assert aio.master_enable == False  # noqa: E712
+
+    def test_default_voltages(self) -> None:
+        """Default voltages are 5.0 and -5.0."""
+        dwf_mock = self._make_dwf_mock()
+
+        with patch("dwf_mcp_server.tools.power.dwf", dwf_mock):
+            result = power_supply()
+
+        assert result["positive_voltage"] == 5.0
+        assert result["negative_voltage"] == -5.0
+
+    def test_positive_voltage_out_of_range_returns_error(self) -> None:
+        """Positive voltage outside [0.5, 5.0] returns an error."""
+        result = power_supply(positive_voltage=0.0)
+        assert "error" in result
+        assert "positive_voltage" in result["error"]
+
+        result = power_supply(positive_voltage=6.0)
+        assert "error" in result
+        assert "positive_voltage" in result["error"]
+
+    def test_negative_voltage_out_of_range_returns_error(self) -> None:
+        """Negative voltage outside [-5.0, -0.5] returns an error."""
+        result = power_supply(negative_voltage=0.0)
+        assert "error" in result
+        assert "negative_voltage" in result["error"]
+
+        result = power_supply(negative_voltage=-6.0)
+        assert "error" in result
+        assert "negative_voltage" in result["error"]
+
+        result = power_supply(negative_voltage=1.0)
+        assert "error" in result
+        assert "negative_voltage" in result["error"]
+
+    def test_device_exception_returns_error(self) -> None:
+        """Device-level exception is caught and returned as error dict."""
+        dwf_mock = MagicMock()
+        dwf_mock.Device.side_effect = RuntimeError("No device found")
+
+        with patch("dwf_mcp_server.tools.power.dwf", dwf_mock):
+            result = power_supply()
+
+        assert "error" in result
+        assert "No device found" in result["error"]
 
 
 # ---------------------------------------------------------------------------
