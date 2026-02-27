@@ -4,10 +4,10 @@ Step-by-step guide to install the WaveForms SDK on the host
 machine and verify that an Analog Discovery 3 (AD3) is recognized
 and usable by `dwf-mcp-server`.
 
-> **Note:** `libdwf.so` is proprietary and must be installed on
-> the host — it is never bundled in the Docker image. `dwfpy`
-> depends on it at runtime; the server will fail at startup if
-> it is missing.
+> **Note:** The Docker image bundles the WaveForms SDK (`libdwf.so`)
+> and Adept 2 Runtime. No host-side installation is needed for
+> Docker usage. The steps below are only needed for **local
+> (non-Docker) development**.
 
 ## 1. Install WaveForms SDK
 
@@ -88,22 +88,10 @@ dwf-mcp-server
 # Server should start on stdio without errors
 ```
 
-## 5. Run via Docker with Volume Mounts
+## 5. Run via Docker
 
 ```bash
-docker run -i --rm \
-  -v /usr/lib/libdwf.so:/usr/lib/libdwf.so:ro \
-  --privileged \
-  ghcr.io/kenosinc/dwf-mcp-server
-```
-
-On NixOS, adjust the source path:
-
-```bash
-docker run -i --rm \
-  -v /run/current-system/sw/lib/libdwf.so:/usr/lib/libdwf.so:ro \
-  --privileged \
-  ghcr.io/kenosinc/dwf-mcp-server
+docker run -i --rm --privileged ghcr.io/kenosinc/dwf-mcp-server
 ```
 
 ## 6. Verify with list_devices MCP Tool
@@ -112,8 +100,6 @@ Call `list_devices` via your MCP client and confirm the AD3 appears in the respo
 
 ## Checklist
 
-- [ ] `libdwf.so` is present on the host
 - [ ] `lsusb` shows the AD3
-- [ ] `dwfpy` enumerate returns at least 1 device
-- [ ] `dwf-mcp-server` starts without import errors
+- [ ] `docker run --privileged ghcr.io/kenosinc/dwf-mcp-server` starts without errors
 - [ ] `list_devices` tool returns the AD3 info

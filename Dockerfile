@@ -16,18 +16,30 @@ RUN uv pip install --system --no-cache . \
 # Stage 2: runtime — minimal image without build tools
 FROM python:3.14-slim
 
-# Install Digilent Adept 2 Runtime (provides libdmgr, libdpcomm, libdftd2xx, etc.)
-# libdwf.so itself is proprietary and must be bind-mounted from the host.
+# Install Digilent Adept 2 Runtime (libdmgr, libdpcomm, etc.) and
+# WaveForms SDK (libdwf.so + device firmware/configurations).
+# Both are free to download from files.digilent.com.
 ARG ADEPT_VERSION=2.27.9
+ARG WAVEFORMS_VERSION=3.24.4
 RUN ARCH="$(dpkg --print-architecture)" \
     && apt-get update \
     && apt-get install -y --no-install-recommends curl \
     && curl -fsSL "https://files.digilent.com/Software/Adept2%20Runtime/${ADEPT_VERSION}/digilent.adept.runtime_${ADEPT_VERSION}-${ARCH}.deb" \
        -o /tmp/adept-runtime.deb \
-    && apt-get install -y --no-install-recommends /tmp/adept-runtime.deb \
+    && curl -fsSL "https://files.digilent.com/Software/Waveforms/${WAVEFORMS_VERSION}/digilent.waveforms_${WAVEFORMS_VERSION}_${ARCH}.deb" \
+       -o /tmp/waveforms.deb \
+    # The WaveForms post-install script calls xdg-desktop-menu and
+    # xdg-icon-resource, which fail in headless containers.  Allow the
+    # initial install to fail, stub out the xdg commands, then re-run
+    # dpkg --configure to finish setup.
+    && (apt-get install -y --no-install-recommends /tmp/adept-runtime.deb /tmp/waveforms.deb || true) \
+    && for cmd in xdg-desktop-menu xdg-icon-resource xdg-mime; do \
+         printf '#!/bin/sh\nexit 0\n' > "/usr/bin/$cmd" && chmod +x "/usr/bin/$cmd"; \
+       done \
+    && dpkg --configure -a \
     && apt-get purge -y curl \
     && apt-get autoremove -y \
-    && rm -f /tmp/adept-runtime.deb \
+    && rm -f /tmp/adept-runtime.deb /tmp/waveforms.deb \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy installed packages and entry-point script from builder.
@@ -39,13 +51,7 @@ RUN PY_SITE=$(python3 -c 'import sysconfig; print(sysconfig.get_path("purelib"))
  && cp -a /opt/site-packages/* "$PY_SITE"/ \
  && rm -rf /opt/site-packages
 
-# libdwf.so is proprietary and must be mounted from the host.
-# Adept 2 Runtime (libdmgr, libdmgt, etc.) is already installed above.
-#
-# Example (Linux host with WaveForms SDK installed):
-#   docker run -i --rm \
-#     -v /usr/lib/libdwf.so:/usr/lib/libdwf.so:ro \
-#     --privileged \
-#     ghcr.io/kenosinc/dwf-mcp-server
+# Example:
+#   docker run -i --rm --privileged ghcr.io/kenosinc/dwf-mcp-server
 
 CMD ["dwf-mcp-server"]

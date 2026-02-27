@@ -12,22 +12,16 @@ instruments — oscilloscope, arbitrary waveform generator (AWG), and logic anal
 
 ## Prerequisites
 
-1. **Digilent WaveForms SDK** must be installed on the **host** machine.
-   Download from [digilent.com](https://digilent.com/reference/software/waveforms/waveforms-3/start).
-   See the [Host Setup Guide](docs/host-setup.md) for detailed
-   installation and verification steps.
-
-2. **libdwf.so** is proprietary and is **not bundled** in the Docker image.
-   It must be volume-mounted from the host at runtime (see [Usage](#usage)).
+The Docker image bundles the Digilent Adept 2 Runtime and WaveForms SDK
+(`libdwf.so` + device firmware). No host-side SDK installation or volume
+mounts are required — just Docker and a USB-connected device.
 
 ## Installation
 
 ### Claude Code
 
 ```bash
-claude mcp add dwf -- docker run -i --rm \
-  -v /usr/lib/libdwf.so:/usr/lib/libdwf.so:ro \
-  --privileged \
+claude mcp add dwf -- docker run -i --rm --privileged \
   ghcr.io/kenosinc/dwf-mcp-server
 ```
 
@@ -42,7 +36,6 @@ Add to `claude_desktop_config.json`:
       "command": "docker",
       "args": [
         "run", "-i", "--rm",
-        "-v", "/usr/lib/libdwf.so:/usr/lib/libdwf.so:ro",
         "--privileged",
         "ghcr.io/kenosinc/dwf-mcp-server"
       ]
@@ -59,14 +52,8 @@ docker pull ghcr.io/kenosinc/dwf-mcp-server
 
 ## Usage
 
-Mount `libdwf.so` from the host (installed with the WaveForms SDK).
-Adept 2 Runtime dependencies (`libdmgr`, `libdmgt`, etc.) are bundled in the Docker image.
-
-| Host path | Notes |
-|---|---|
-| `/usr/lib/libdwf.so` | Main WaveForms library (proprietary, not bundled) |
-
 Pass `--privileged` so the container can access USB devices.
+All required libraries and firmware are bundled in the image.
 
 ## Available MCP Tools
 
