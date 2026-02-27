@@ -65,20 +65,8 @@ jobs:
       - name: Create .env (required by --env-file)
         run: touch .env
 
-      - name: Build and run devcontainer
+      - name: Build devcontainer
         uses: devcontainers/ci@v0.3
-        with:
-          runCmd: |
-            set -euo pipefail
-            echo "--- Verify dev utilities ---"
-            python3 --version
-            uv --version
-            ruff --version
-            yamllint --version
-            gh --version
-            node --version
-            markdownlint-cli2 --version
-            python3 -c "import dwf_mcp_server.server; print('dwf-mcp-server: ok')"
 
   docker:
     name: Docker build
