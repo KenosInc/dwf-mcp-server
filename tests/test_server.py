@@ -340,6 +340,19 @@ class TestGpioRead:
         channel_mock.setup.assert_called_once_with(enabled=False, configure=True)
         dio_mock.read_status.assert_called_once()
 
+    def test_max_pin_succeeds(self) -> None:
+        """Pin 16 (the maximum) succeeds and maps to index 15."""
+        dwf_mock = self._make_dwf_mock()
+        device_mock = dwf_mock.Device.return_value.__enter__.return_value
+        dio_mock = device_mock.digital_io
+
+        with patch("dwf_mcp_server.tools.gpio.dwf", dwf_mock):
+            result = gpio_read(pin=16)
+
+        assert "error" not in result
+        assert result["pin"] == 16
+        dio_mock.__getitem__.assert_called_with(15)
+
     def test_pin_below_range_returns_error(self) -> None:
         """Pin 0 returns an error (minimum is 1)."""
         result = gpio_read(pin=0)
@@ -428,6 +441,18 @@ class TestGpioWrite:
             gpio_write(pin=1, value=True)
 
         channel_mock.setup.assert_called_once_with(enabled=True, state=True, configure=True)
+
+    def test_configures_as_output_with_state_low(self) -> None:
+        """Pin is configured as output with state=False when value is False."""
+        dwf_mock = self._make_dwf_mock()
+        device_mock = dwf_mock.Device.return_value.__enter__.return_value
+        dio_mock = device_mock.digital_io
+        channel_mock = dio_mock.__getitem__.return_value
+
+        with patch("dwf_mcp_server.tools.gpio.dwf", dwf_mock):
+            gpio_write(pin=1, value=False)
+
+        channel_mock.setup.assert_called_once_with(enabled=True, state=False, configure=True)
 
     def test_pin_below_range_returns_error(self) -> None:
         """Pin 0 returns an error (minimum is 1)."""

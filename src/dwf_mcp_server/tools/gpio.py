@@ -4,7 +4,7 @@ import dwfpy as dwf
 from fastmcp import FastMCP
 
 _MIN_PIN = 1
-_MAX_PIN = 16
+_MAX_PIN = 16  # AD2/AD3 have 16 DIO pins
 
 
 def gpio_read(pin: int, device_index: int = 0) -> dict:
@@ -38,6 +38,8 @@ def gpio_read(pin: int, device_index: int = 0) -> dict:
 
 def gpio_write(pin: int, value: bool, device_index: int = 0) -> dict:
     """Set the logic level of a digital I/O pin.
+
+    The pin is automatically configured as an output before writing.
 
     Args:
         pin: DIO pin number (1-16). Converted to 0-based internally.
