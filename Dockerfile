@@ -1,5 +1,5 @@
 # Stage 1: builder — installs the package and dependencies
-FROM python:3.12-slim AS builder
+FROM python:3.14-slim AS builder
 
 WORKDIR /build
 
@@ -14,7 +14,7 @@ RUN uv pip install --system --no-cache . \
  && cp -a "$PY_SITE" /opt/site-packages
 
 # Stage 2: runtime — minimal image without build tools
-FROM python:3.12-slim
+FROM python:3.14-slim
 
 # Copy installed packages and entry-point script from builder.
 # Site-packages go through a staging path so the COPY is version-agnostic;
