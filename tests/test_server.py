@@ -10,6 +10,7 @@ from fastmcp import FastMCP
 import dwf_mcp_server.server as srv
 import dwf_mcp_server.tools.analog as analog_mod
 from dwf_mcp_server.tools.devices import device_info, list_devices
+from dwf_mcp_server.tools.protocols import spi_transfer
 
 
 def _make_device_info(
@@ -159,7 +160,7 @@ class TestServerRegistration:
         assert isinstance(srv.mcp, FastMCP)
 
     def test_tools_registered(self) -> None:
-        """All six tools are registered on the server."""
+        """All seven tools are registered on the server."""
         tools = asyncio.run(srv.mcp.list_tools())
         tool_names = {t.name for t in tools}
         expected = {
@@ -169,5 +170,82 @@ class TestServerRegistration:
             "generate_waveform",
             "measure",
             "digital_capture",
+            "spi_transfer",
         }
         assert expected.issubset(tool_names)
+
+
+# ---------------------------------------------------------------------------
+# protocols.spi_transfer
+# ---------------------------------------------------------------------------
+
+
+class TestSpiTransfer:
+    def _make_dwf_mock(self) -> MagicMock:
+        """Create a dwf mock with SPI protocol support."""
+        dwf_mock = MagicMock()
+        spi_mock = dwf_mock.Device.return_value.__enter__.return_value.protocols.spi
+        spi_mock.write_read.return_value = b"\xaa\xbb\xcc"
+        return dwf_mock
+
+    def test_write_only(self) -> None:
+        """Write-only transfer (no MISO) returns mosi hex and null miso."""
+        dwf_mock = self._make_dwf_mock()
+        spi_mock = dwf_mock.Device.return_value.__enter__.return_value.protocols.spi
+
+        with patch("dwf_mcp_server.tools.protocols.dwf", dwf_mock):
+            result = spi_transfer(clock_pin=1, mosi_pin=2, cs_pin=0, mosi_data="180001")
+
+        assert result["mosi"] == "180001"
+        assert result["miso"] is None
+        assert result["bits_transferred"] == 24
+        spi_mock.setup.assert_called_once()
+        spi_mock.write_one.assert_called_once_with(0x180001, bits_per_word=24)
+        spi_mock.select.assert_any_call("low")
+        spi_mock.select.assert_any_call("high")
+
+    def test_write_read(self) -> None:
+        """Full-duplex transfer (with MISO) returns both mosi and miso hex."""
+        dwf_mock = self._make_dwf_mock()
+
+        with patch("dwf_mcp_server.tools.protocols.dwf", dwf_mock):
+            result = spi_transfer(
+                clock_pin=1,
+                mosi_pin=2,
+                cs_pin=0,
+                mosi_data="180001",
+                miso_pin=3,
+            )
+
+        assert result["mosi"] == "180001"
+        assert result["miso"] == "aabbcc"
+        assert result["bits_transferred"] == 24
+
+    def test_invalid_hex_returns_error(self) -> None:
+        """Invalid hex string returns an error without opening the device."""
+        result = spi_transfer(clock_pin=1, mosi_pin=2, cs_pin=0, mosi_data="ZZZZ")
+        assert "error" in result
+        assert "Invalid hex" in result["error"]
+
+    def test_empty_hex_returns_error(self) -> None:
+        """Empty hex string returns an error."""
+        result = spi_transfer(clock_pin=1, mosi_pin=2, cs_pin=0, mosi_data="")
+        assert "error" in result
+        assert "empty" in result["error"]
+
+    def test_invalid_mode_returns_error(self) -> None:
+        """SPI mode outside 0-3 returns an error."""
+        result = spi_transfer(clock_pin=1, mosi_pin=2, cs_pin=0, mosi_data="ff", mode=5)
+        assert "error" in result
+        assert "mode" in result["error"].lower()
+
+    def test_device_exception_returns_error(self) -> None:
+        """Device-level exception is caught and returned as error dict."""
+        dwf_mock = MagicMock()
+        dwf_mock.Device.side_effect = RuntimeError("No device found")
+
+        with patch("dwf_mcp_server.tools.protocols.dwf", dwf_mock):
+            result = spi_transfer(clock_pin=1, mosi_pin=2, cs_pin=0, mosi_data="ff")
+
+        assert "error" in result
+        assert "No device found" in result["error"]

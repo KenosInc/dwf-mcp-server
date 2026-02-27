@@ -65,6 +65,7 @@ All required libraries and firmware are bundled in the image.
 | `generate_waveform` | Generate an analog signal (AWG): sine, square, triangle, … |
 | `measure` | Measure DC voltage, RMS, frequency, period, or peak-to-peak |
 | `digital_capture` | Capture digital logic signals (logic analyzer) |
+| `spi_transfer` | Send and receive data over SPI using the digital protocol interface |
 
 ## Development
 
