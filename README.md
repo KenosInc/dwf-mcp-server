@@ -93,6 +93,7 @@ Pass `--privileged` so the container can access USB devices.
 | `analog_capture` | Capture analog waveform samples (oscilloscope) |
 | `generate_waveform` | Generate an analog signal (AWG): sine, square, triangle, ... |
 | `measure` | Measure DC voltage, RMS, frequency, period, or peak-to-peak |
+| `power_supply` | Control the programmable power supply (V+ / V-) |
 | `digital_capture` | Capture digital logic signals (logic analyzer) |
 | `gpio_read` | Read the logic level of a digital I/O pin |
 | `gpio_write` | Set the logic level of a digital I/O pin |
