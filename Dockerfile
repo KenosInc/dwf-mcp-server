@@ -28,13 +28,14 @@ RUN ARCH="$(dpkg --print-architecture)" \
        -o /tmp/adept-runtime.deb \
     && curl -fsSL "https://files.digilent.com/Software/Waveforms/${WAVEFORMS_VERSION}/digilent.waveforms_${WAVEFORMS_VERSION}_${ARCH}.deb" \
        -o /tmp/waveforms.deb \
-    # The WaveForms post-install script calls xdg-desktop-menu to register
-    # desktop shortcuts, which fails in headless containers.  Allow the
-    # initial install to fail, then stub out xdg-desktop-menu and re-run
+    # The WaveForms post-install script calls xdg-desktop-menu and
+    # xdg-icon-resource, which fail in headless containers.  Allow the
+    # initial install to fail, stub out the xdg commands, then re-run
     # dpkg --configure to finish setup.
     && (apt-get install -y --no-install-recommends /tmp/adept-runtime.deb /tmp/waveforms.deb || true) \
-    && printf '#!/bin/sh\nexit 0\n' > /usr/bin/xdg-desktop-menu \
-    && chmod +x /usr/bin/xdg-desktop-menu \
+    && for cmd in xdg-desktop-menu xdg-icon-resource xdg-mime; do \
+         printf '#!/bin/sh\nexit 0\n' > "/usr/bin/$cmd" && chmod +x "/usr/bin/$cmd"; \
+       done \
     && dpkg --configure -a \
     && apt-get purge -y curl \
     && apt-get autoremove -y \
