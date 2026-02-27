@@ -26,10 +26,7 @@ instruments — oscilloscope, arbitrary waveform generator (AWG), and logic anal
 
 ```bash
 claude mcp add dwf -- docker run -i --rm \
-  -v /usr/lib/libdwf.so:/usr/lib/libdwf.so \
-  -v /usr/lib/libdmgr.so.2:/usr/lib/libdmgr.so.2 \
-  -v /usr/lib/libdmgt.so.2:/usr/lib/libdmgt.so.2 \
-  -v /usr/lib/libdjtg.so.2:/usr/lib/libdjtg.so.2 \
+  -v /usr/lib/libdwf.so:/usr/lib/libdwf.so:ro \
   --privileged \
   ghcr.io/kenosinc/dwf-mcp-server
 ```
@@ -45,10 +42,7 @@ Add to `claude_desktop_config.json`:
       "command": "docker",
       "args": [
         "run", "-i", "--rm",
-        "-v", "/usr/lib/libdwf.so:/usr/lib/libdwf.so",
-        "-v", "/usr/lib/libdmgr.so.2:/usr/lib/libdmgr.so.2",
-        "-v", "/usr/lib/libdmgt.so.2:/usr/lib/libdmgt.so.2",
-        "-v", "/usr/lib/libdjtg.so.2:/usr/lib/libdjtg.so.2",
+        "-v", "/usr/lib/libdwf.so:/usr/lib/libdwf.so:ro",
         "--privileged",
         "ghcr.io/kenosinc/dwf-mcp-server"
       ]
@@ -65,14 +59,12 @@ docker pull ghcr.io/kenosinc/dwf-mcp-server
 
 ## Usage
 
-All four `.so` files below must be present on the host (installed with the WaveForms SDK):
+Mount `libdwf.so` from the host (installed with the WaveForms SDK).
+Adept 2 Runtime dependencies (`libdmgr`, `libdmgt`, etc.) are bundled in the Docker image.
 
 | Host path | Notes |
 |---|---|
-| `/usr/lib/libdwf.so` | Main WaveForms library |
-| `/usr/lib/libdmgr.so.2` | Device manager |
-| `/usr/lib/libdmgt.so.2` | Device management transport |
-| `/usr/lib/libdjtg.so.2` | JTAG transport |
+| `/usr/lib/libdwf.so` | Main WaveForms library (proprietary, not bundled) |
 
 Pass `--privileged` so the container can access USB devices.
 
