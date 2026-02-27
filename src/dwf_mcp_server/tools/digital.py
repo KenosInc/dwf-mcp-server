@@ -29,13 +29,12 @@ def digital_capture(
         buffer_size = int(sample_rate * duration)
 
         with dwf.Device(device_id=device_index) as device:
-            la = device.logic_analyzer
-            la.setup(sample_rate=sample_rate, buffer_size=buffer_size)
-            la.single()
+            la = device.digital_input
+            la.setup_acquisition(sample_rate=sample_rate, buffer_size=buffer_size, start=True)
 
             timeout = max(duration * 10, 5.0)
             deadline = time.monotonic() + timeout
-            while not la.is_done():
+            while la.read_status(read_data=True) != dwf.Status.DONE:
                 if time.monotonic() > deadline:
                     return {"error": "Capture timed out."}
                 time.sleep(0.001)
