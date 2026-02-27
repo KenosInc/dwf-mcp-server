@@ -5,6 +5,9 @@ set -euo pipefail
 sudo chown -R vscode:vscode /home/vscode/.config
 sudo chown -R vscode:vscode /home/vscode/.claude
 
+# uv cache volume may be created as root; fix ownership so uv can write to it
+sudo chown -R vscode:vscode /home/vscode/.cache
+
 # Claude Code skip onboarding
 if [ ! -f "$HOME/.claude.json" ]; then
   cat > "$HOME/.claude.json" << 'EOF'
@@ -20,8 +23,11 @@ fi
 # Install global npm tools
 npm install -g markdownlint-cli2
 
-# Install Python package in editable mode with dev extras
-uv pip install --system -e "/workspaces/dwf-mcp-server[dev]"
+# Create venv and install Python package in editable mode with dev extras
+uv venv /workspaces/dwf-mcp-server/.venv
+# shellcheck disable=SC1091
+source /workspaces/dwf-mcp-server/.venv/bin/activate
+uv pip install -e "/workspaces/dwf-mcp-server[dev]"
 
 # Verify all tools are available
 echo "--- Tool verification ---"
@@ -32,7 +38,7 @@ yamllint --version
 gh --version
 node --version
 markdownlint-cli2 --version
-dwf-mcp-server --help 2>/dev/null || true
+python3 -c "import dwf_mcp_server.server" 2>/dev/null && echo "dwf-mcp-server: ok" || echo "dwf-mcp-server: import failed (libdwf not mounted?)"
 
 # Check uv cache volume permissions
 if [ ! -w /home/vscode/.cache/uv ]; then

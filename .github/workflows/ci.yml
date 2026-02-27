@@ -51,6 +51,23 @@ jobs:
       - name: Run tests
         run: pytest tests/ -v --tb=short
 
+  devcontainer:
+    name: Devcontainer CI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Create libdwf stub for bind mount
+        run: |
+          sudo mkdir -p /run/current-system/sw/lib
+          sudo touch /run/current-system/sw/lib/libdwf.so
+
+      - name: Create .env (required by --env-file)
+        run: touch .env
+
+      - name: Build devcontainer
+        uses: devcontainers/ci@v0.3
+
   docker:
     name: Docker build
     runs-on: ubuntu-latest

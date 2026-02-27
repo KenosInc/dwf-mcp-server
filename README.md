@@ -14,6 +14,8 @@ instruments — oscilloscope, arbitrary waveform generator (AWG), and logic anal
 
 1. **Digilent WaveForms SDK** must be installed on the **host** machine.
    Download from [digilent.com](https://digilent.com/reference/software/waveforms/waveforms-3/start).
+   See the [Host Setup Guide](docs/host-setup.md) for detailed
+   installation and verification steps.
 
 2. **libdwf.so** is proprietary and is **not bundled** in the Docker image.
    It must be volume-mounted from the host at runtime (see [Usage](#usage)).
