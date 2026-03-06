@@ -31,3 +31,6 @@ htmlcov/
 
 # Environment files
 .env
+
+# Local-only Dockerfiles (contain proprietary SDK references)
+Dockerfile.local
