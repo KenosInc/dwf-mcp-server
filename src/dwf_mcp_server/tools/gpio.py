@@ -3,8 +3,8 @@
 import dwfpy as dwf
 from fastmcp import FastMCP
 
-_MIN_PIN = 1
-_MAX_PIN = 16  # AD2/AD3 have 16 DIO pins
+_MIN_PIN = 0
+_MAX_PIN = 15  # AD2/AD3 have 16 DIO pins (DIO0-DIO15)
 
 
 def gpio_read(pin: int, device_index: int = 0) -> dict:
@@ -13,23 +13,21 @@ def gpio_read(pin: int, device_index: int = 0) -> dict:
     The pin is automatically configured as an input before reading.
 
     Args:
-        pin: DIO pin number (1-16). Converted to 0-based internally.
+        pin: DIO pin number (0-15), matching hardware labels DIO0-DIO15.
         device_index: Device index (default: 0, the first device).
 
     Returns:
-        Dictionary with 'pin' (1-based) and 'value' (true = HIGH, false = LOW).
+        Dictionary with 'pin' and 'value' (true = HIGH, false = LOW).
     """
     if not (_MIN_PIN <= pin <= _MAX_PIN):
         return {"error": f"Pin {pin} out of range (must be {_MIN_PIN}-{_MAX_PIN})."}
 
-    pin_idx = pin - 1
-
     try:
         with dwf.Device(device_id=device_index) as device:
             dio = device.digital_io
-            dio[pin_idx].setup(enabled=False, configure=True)
+            dio[pin].setup(enabled=False, configure=True)
             dio.read_status()
-            value = dio[pin_idx].input_state
+            value = dio[pin].input_state
 
         return {"pin": pin, "value": value}
     except Exception as exc:  # noqa: BLE001
@@ -42,22 +40,20 @@ def gpio_write(pin: int, value: bool, device_index: int = 0) -> dict:
     The pin is automatically configured as an output before writing.
 
     Args:
-        pin: DIO pin number (1-16). Converted to 0-based internally.
+        pin: DIO pin number (0-15), matching hardware labels DIO0-DIO15.
         value: Logic level to set (true = HIGH, false = LOW).
         device_index: Device index (default: 0, the first device).
 
     Returns:
-        Dictionary with 'pin' (1-based) and 'value' (the level that was set).
+        Dictionary with 'pin' and 'value' (the level that was set).
     """
     if not (_MIN_PIN <= pin <= _MAX_PIN):
         return {"error": f"Pin {pin} out of range (must be {_MIN_PIN}-{_MAX_PIN})."}
 
-    pin_idx = pin - 1
-
     try:
         with dwf.Device(device_id=device_index) as device:
             dio = device.digital_io
-            dio[pin_idx].setup(enabled=True, state=value, configure=True)
+            dio[pin].setup(enabled=True, state=value, configure=True)
 
         return {"pin": pin, "value": value}
     except Exception as exc:  # noqa: BLE001
