@@ -1,7 +1,11 @@
 """Digilent WaveForms MCP Server entry point."""
 
+import logging
+import sys
+
 from fastmcp import FastMCP
 
+from dwf_mcp_server.diagnostics import check_environment
 from dwf_mcp_server.tools import analog, devices, digital, gpio, power, protocols
 
 mcp = FastMCP(
@@ -30,6 +34,13 @@ protocols.register(mcp)
 
 def main() -> None:
     """Run the MCP server over stdio."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(levelname)s: %(message)s",
+        stream=sys.stderr,
+    )
+    if not check_environment():
+        sys.exit(1)
     mcp.run()
 
 
