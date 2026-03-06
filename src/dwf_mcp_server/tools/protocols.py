@@ -18,13 +18,13 @@ def spi_transfer(
     """Send and optionally receive data over SPI using the digital protocol interface.
 
     Args:
-        clock_pin: DIO channel number for SPI clock (SCLK).
-        mosi_pin: DIO channel number for Master-Out Slave-In (MOSI / DIN).
-        cs_pin: DIO channel number for chip-select (active low).
+        clock_pin: DIO pin number for SPI clock (SCLK), 0-based (0-15).
+        mosi_pin: DIO pin number for Master-Out Slave-In (MOSI / DIN), 0-based (0-15).
+        cs_pin: DIO pin number for chip-select (active low), 0-based (0-15).
         mosi_data: Hex-encoded bytes to transmit, e.g. "180001" for 3 bytes.
         clock_frequency: SPI clock frequency in Hz (default: 1 MHz).
         mode: SPI mode 0-3 defining clock polarity/phase (default: 0).
-        miso_pin: DIO channel number for Master-In Slave-Out (MISO / DOUT).
+        miso_pin: DIO pin number for Master-In Slave-Out (MISO / DOUT), 0-based (0-15).
             If None, a write-only transfer is performed.
         bits_per_word: Bits per SPI word, 1-32 (default: 8).
         device_index: Device index (default: 0, the first device).

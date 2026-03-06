@@ -78,6 +78,15 @@ sample buffer, measure the time span between first and last crossing, then deriv
 (`libdwf.so`) are proprietary — users install them via a derived Dockerfile layer. The public
 Docker image includes only their system-level dependencies (e.g. `libusb-1.0-0`).
 
+## Host / Container Gotchas
+
+- **`/etc/digilent-adept.conf` must exist** — without it, DWF SDK silently fails (device
+  enumeration returns empty or hardware control is a no-op despite no errors).
+- **USB permissions** — Digilent devices default to `root:root 0664`. Either add a udev rule
+  (`ATTRS{idVendor}=="1443", MODE="0666"`) or ensure the user is in the correct group.
+- **Docker `--privileged`** is required for USB access; the container's own `/etc/digilent-adept.conf`
+  (installed by the Adept .deb) is sufficient — do NOT mount the host's Nix/distro-specific conf.
+
 ## Coding Conventions
 
 - **Language**: all GitHub issues, PRs, milestones, and commit messages must be written in English
@@ -85,7 +94,9 @@ Docker image includes only their system-level dependencies (e.g. `libusb-1.0-0`)
 - **Type annotations**: all public functions must have fully-annotated signatures
 - **Return types**: MCP tools return `dict` or `list[dict]`
 - **Imports**: stdlib → third-party → local, sorted by ruff
-- **Channel indexing**: MCP tools accept 1-based channel numbers; convert to 0-based (`ch_idx = channel - 1`) before passing to `dwfpy`
+- **Pin/channel indexing**: follows hardware labels — no conversion layer
+  - **DIO pins** (gpio, spi, digital_capture): **0-based** (0-15), matching DIO0-DIO15
+  - **Analog channels** (oscilloscope, AWG): **1-based** (1-2), matching CH1/CH2 and W1/W2
 
 ## Release Procedure
 
