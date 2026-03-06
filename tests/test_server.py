@@ -2,13 +2,16 @@
 
 import asyncio
 import importlib
+import logging
 import math
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, mock_open, patch
 
+import pytest
 from fastmcp import FastMCP
 
 import dwf_mcp_server.server as srv
 import dwf_mcp_server.tools.analog as analog_mod
+from dwf_mcp_server.diagnostics import check_environment
 from dwf_mcp_server.tools.analog import analog_capture, generate_waveform, measure
 from dwf_mcp_server.tools.devices import device_info, list_devices
 from dwf_mcp_server.tools.digital import digital_capture
@@ -955,3 +958,185 @@ class TestDigitalCapture:
 
         assert "error" in result
         assert "No device found" in result["error"]
+
+
+# ---------------------------------------------------------------------------
+# diagnostics.check_environment
+# ---------------------------------------------------------------------------
+
+_DIAG = "dwf_mcp_server.diagnostics"
+
+
+class TestCheckEnvironment:
+    """Tests for startup environment diagnostics."""
+
+    _CONF = "DigilentPath=/opt/digilent\nDigilentDataPath=/usr/share/digilent\n"
+
+    def _patch_docker(self, is_docker: bool = True):  # noqa: FBT001,FBT002
+        return patch(f"{_DIAG}._is_docker", return_value=is_docker)
+
+    def test_skips_outside_docker(self) -> None:
+        """Returns True immediately when not in Docker."""
+        with self._patch_docker(False):
+            assert check_environment() is True
+
+    def test_all_checks_pass(self) -> None:
+        """Returns True when all prerequisites are met."""
+        dwf_mock = MagicMock()
+        dwf_mock.Device.enumerate.return_value = [MagicMock()]
+
+        with (
+            self._patch_docker(),
+            patch(f"{_DIAG}.os.path.isfile", return_value=True),
+            patch(f"{_DIAG}.os.path.isdir", return_value=True),
+            patch(f"{_DIAG}.os.listdir", return_value=["firmware.hex"]),
+            patch(f"{_DIAG}.open", mock_open(read_data=self._CONF)),
+            patch(f"{_DIAG}.tempfile.NamedTemporaryFile"),
+            patch(f"{_DIAG}.dwf", dwf_mock),
+        ):
+            assert check_environment() is True
+
+    def test_missing_adept_conf(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Returns False when /etc/digilent-adept.conf is missing."""
+        dwf_mock = MagicMock()
+        dwf_mock.Device.enumerate.return_value = [MagicMock()]
+
+        def fake_isfile(path: str) -> bool:
+            return path != "/etc/digilent-adept.conf"
+
+        with (
+            self._patch_docker(),
+            patch(f"{_DIAG}.os.path.isfile", side_effect=fake_isfile),
+            patch(f"{_DIAG}.os.path.isdir", return_value=True),
+            patch(f"{_DIAG}.os.listdir", return_value=["firmware.hex"]),
+            patch(f"{_DIAG}.tempfile.NamedTemporaryFile"),
+            patch(f"{_DIAG}.dwf", dwf_mock),
+            caplog.at_level(logging.ERROR),
+        ):
+            assert check_environment() is False
+
+        assert "not found" in caplog.text
+        assert "digilent-adept.conf" in caplog.text
+
+    def test_invalid_digilent_path(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Returns False when DigilentPath points to nonexistent directory."""
+        conf_content = "DigilentPath=/nonexistent\nDigilentDataPath=/usr/share/digilent\n"
+        dwf_mock = MagicMock()
+        dwf_mock.Device.enumerate.return_value = [MagicMock()]
+
+        def fake_isdir(path: str) -> bool:
+            return path != "/nonexistent"
+
+        with (
+            self._patch_docker(),
+            patch(f"{_DIAG}.os.path.isfile", return_value=True),
+            patch(f"{_DIAG}.os.path.isdir", side_effect=fake_isdir),
+            patch(f"{_DIAG}.os.listdir", return_value=["firmware.hex"]),
+            patch(f"{_DIAG}.open", mock_open(read_data=conf_content)),
+            patch(f"{_DIAG}.tempfile.NamedTemporaryFile"),
+            patch(f"{_DIAG}.dwf", dwf_mock),
+            caplog.at_level(logging.ERROR),
+        ):
+            assert check_environment() is False
+
+        assert "DigilentPath" in caplog.text
+
+    def test_no_firmware_dir(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Returns False when firmware directory is missing."""
+        dwf_mock = MagicMock()
+        dwf_mock.Device.enumerate.return_value = [MagicMock()]
+
+        def fake_isdir(path: str) -> bool:
+            return path != "/usr/share/digilent/waveforms/firmware"
+
+        with (
+            self._patch_docker(),
+            patch(f"{_DIAG}.os.path.isfile", return_value=True),
+            patch(f"{_DIAG}.os.path.isdir", side_effect=fake_isdir),
+            patch(f"{_DIAG}.open", mock_open(read_data=self._CONF)),
+            patch(f"{_DIAG}.tempfile.NamedTemporaryFile"),
+            patch(f"{_DIAG}.dwf", dwf_mock),
+            caplog.at_level(logging.ERROR),
+        ):
+            assert check_environment() is False
+
+        assert "firmware" in caplog.text.lower()
+
+    def test_empty_firmware_dir(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Returns False when firmware directory has no .hex files."""
+        dwf_mock = MagicMock()
+        dwf_mock.Device.enumerate.return_value = [MagicMock()]
+
+        with (
+            self._patch_docker(),
+            patch(f"{_DIAG}.os.path.isfile", return_value=True),
+            patch(f"{_DIAG}.os.path.isdir", return_value=True),
+            patch(f"{_DIAG}.os.listdir", return_value=["readme.txt"]),
+            patch(f"{_DIAG}.open", mock_open(read_data=self._CONF)),
+            patch(f"{_DIAG}.tempfile.NamedTemporaryFile"),
+            patch(f"{_DIAG}.dwf", dwf_mock),
+            caplog.at_level(logging.ERROR),
+        ):
+            assert check_environment() is False
+
+        assert ".hex" in caplog.text
+
+    def test_tmp_not_writable(self, caplog: pytest.LogCaptureFixture) -> None:
+        """/tmp not writable causes failure."""
+        dwf_mock = MagicMock()
+        dwf_mock.Device.enumerate.return_value = [MagicMock()]
+
+        with (
+            self._patch_docker(),
+            patch(f"{_DIAG}.os.path.isfile", return_value=True),
+            patch(f"{_DIAG}.os.path.isdir", return_value=True),
+            patch(f"{_DIAG}.os.listdir", return_value=["firmware.hex"]),
+            patch(f"{_DIAG}.open", mock_open(read_data=self._CONF)),
+            patch(
+                f"{_DIAG}.tempfile.NamedTemporaryFile",
+                side_effect=OSError("read-only"),
+            ),
+            patch(f"{_DIAG}.dwf", dwf_mock),
+            caplog.at_level(logging.ERROR),
+        ):
+            assert check_environment() is False
+
+        assert "/tmp" in caplog.text
+
+    def test_no_devices_warns_but_passes(self, caplog: pytest.LogCaptureFixture) -> None:
+        """No devices found logs warning but returns True."""
+        dwf_mock = MagicMock()
+        dwf_mock.Device.enumerate.return_value = []
+
+        with (
+            self._patch_docker(),
+            patch(f"{_DIAG}.os.path.isfile", return_value=True),
+            patch(f"{_DIAG}.os.path.isdir", return_value=True),
+            patch(f"{_DIAG}.os.listdir", return_value=["firmware.hex"]),
+            patch(f"{_DIAG}.open", mock_open(read_data=self._CONF)),
+            patch(f"{_DIAG}.tempfile.NamedTemporaryFile"),
+            patch(f"{_DIAG}.dwf", dwf_mock),
+            caplog.at_level(logging.WARNING),
+        ):
+            assert check_environment() is True
+
+        assert "No Digilent WaveForms devices found" in caplog.text
+
+    def test_dwf_enumerate_failure_warns_but_passes(self, caplog: pytest.LogCaptureFixture) -> None:
+        """dwfpy enumerate failure logs warning but returns True."""
+        dwf_mock = MagicMock()
+        dwf_mock.Device.enumerate.side_effect = RuntimeError("libdwf not loaded")
+
+        with (
+            self._patch_docker(),
+            patch(f"{_DIAG}.os.path.isfile", return_value=True),
+            patch(f"{_DIAG}.os.path.isdir", return_value=True),
+            patch(f"{_DIAG}.os.listdir", return_value=["firmware.hex"]),
+            patch(f"{_DIAG}.open", mock_open(read_data=self._CONF)),
+            patch(f"{_DIAG}.tempfile.NamedTemporaryFile"),
+            patch(f"{_DIAG}.dwf", dwf_mock),
+            caplog.at_level(logging.WARNING),
+        ):
+            assert check_environment() is True
+
+        assert "libdwf" in caplog.text.lower()
