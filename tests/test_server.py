@@ -6,6 +6,7 @@ import logging
 import math
 from unittest.mock import MagicMock, mock_open, patch
 
+import pytest
 from fastmcp import FastMCP
 
 import dwf_mcp_server.server as srv
@@ -995,7 +996,7 @@ class TestCheckEnvironment:
         ):
             assert check_environment() is True
 
-    def test_missing_adept_conf(self, caplog: logging.LogCaptureFixture) -> None:
+    def test_missing_adept_conf(self, caplog: pytest.LogCaptureFixture) -> None:
         """Returns False when /etc/digilent-adept.conf is missing."""
         dwf_mock = MagicMock()
         dwf_mock.Device.enumerate.return_value = [MagicMock()]
@@ -1017,7 +1018,7 @@ class TestCheckEnvironment:
         assert "not found" in caplog.text
         assert "digilent-adept.conf" in caplog.text
 
-    def test_invalid_digilent_path(self, caplog: logging.LogCaptureFixture) -> None:
+    def test_invalid_digilent_path(self, caplog: pytest.LogCaptureFixture) -> None:
         """Returns False when DigilentPath points to nonexistent directory."""
         conf_content = "DigilentPath=/nonexistent\nDigilentDataPath=/usr/share/digilent\n"
         dwf_mock = MagicMock()
@@ -1040,7 +1041,7 @@ class TestCheckEnvironment:
 
         assert "DigilentPath" in caplog.text
 
-    def test_no_firmware_dir(self, caplog: logging.LogCaptureFixture) -> None:
+    def test_no_firmware_dir(self, caplog: pytest.LogCaptureFixture) -> None:
         """Returns False when firmware directory is missing."""
         dwf_mock = MagicMock()
         dwf_mock.Device.enumerate.return_value = [MagicMock()]
@@ -1061,7 +1062,7 @@ class TestCheckEnvironment:
 
         assert "firmware" in caplog.text.lower()
 
-    def test_empty_firmware_dir(self, caplog: logging.LogCaptureFixture) -> None:
+    def test_empty_firmware_dir(self, caplog: pytest.LogCaptureFixture) -> None:
         """Returns False when firmware directory has no .hex files."""
         dwf_mock = MagicMock()
         dwf_mock.Device.enumerate.return_value = [MagicMock()]
@@ -1080,7 +1081,7 @@ class TestCheckEnvironment:
 
         assert ".hex" in caplog.text
 
-    def test_tmp_not_writable(self, caplog: logging.LogCaptureFixture) -> None:
+    def test_tmp_not_writable(self, caplog: pytest.LogCaptureFixture) -> None:
         """/tmp not writable causes failure."""
         dwf_mock = MagicMock()
         dwf_mock.Device.enumerate.return_value = [MagicMock()]
@@ -1102,7 +1103,7 @@ class TestCheckEnvironment:
 
         assert "/tmp" in caplog.text
 
-    def test_no_devices_warns_but_passes(self, caplog: logging.LogCaptureFixture) -> None:
+    def test_no_devices_warns_but_passes(self, caplog: pytest.LogCaptureFixture) -> None:
         """No devices found logs warning but returns True."""
         dwf_mock = MagicMock()
         dwf_mock.Device.enumerate.return_value = []
@@ -1121,9 +1122,7 @@ class TestCheckEnvironment:
 
         assert "No Digilent WaveForms devices found" in caplog.text
 
-    def test_dwf_enumerate_failure_warns_but_passes(
-        self, caplog: logging.LogCaptureFixture
-    ) -> None:
+    def test_dwf_enumerate_failure_warns_but_passes(self, caplog: pytest.LogCaptureFixture) -> None:
         """dwfpy enumerate failure logs warning but returns True."""
         dwf_mock = MagicMock()
         dwf_mock.Device.enumerate.side_effect = RuntimeError("libdwf not loaded")
