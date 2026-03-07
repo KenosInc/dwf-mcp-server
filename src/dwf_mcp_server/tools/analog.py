@@ -8,6 +8,8 @@ from typing import Literal
 import dwfpy as dwf
 from fastmcp import FastMCP
 
+from dwf_mcp_server.session import get_manager
+
 
 def analog_capture(
     channel: int = 1,
@@ -32,19 +34,19 @@ def analog_capture(
         buffer_size = int(sample_rate * duration)
         ch_idx = channel - 1  # dwfpy uses 0-based channel indexing
 
-        with dwf.Device(device_id=device_index) as device:
-            scope = device.analog_input
-            scope[ch_idx].setup(range=voltage_range, enabled=True)
-            scope.setup_acquisition(sample_rate=sample_rate, buffer_size=buffer_size, start=True)
+        device = get_manager().acquire(device_index)
+        scope = device.analog_input
+        scope[ch_idx].setup(range=voltage_range, enabled=True)
+        scope.setup_acquisition(sample_rate=sample_rate, buffer_size=buffer_size, start=True)
 
-            timeout = max(duration * 10, 5.0)
-            deadline = time.monotonic() + timeout
-            while scope.read_status(read_data=True) != dwf.Status.DONE:
-                if time.monotonic() > deadline:
-                    return {"error": "Capture timed out."}
-                time.sleep(0.001)
+        timeout = max(duration * 10, 5.0)
+        deadline = time.monotonic() + timeout
+        while scope.read_status(read_data=True) != dwf.Status.DONE:
+            if time.monotonic() > deadline:
+                return {"error": "Capture timed out."}
+            time.sleep(0.001)
 
-            samples: list[float] = scope[ch_idx].get_data().tolist()
+        samples: list[float] = scope[ch_idx].get_data().tolist()
 
         return {
             "channel": channel,
@@ -55,6 +57,7 @@ def analog_capture(
             "samples": samples,
         }
     except Exception as exc:  # noqa: BLE001
+        get_manager().release(device_index)
         return {"error": str(exc)}
 
 
@@ -82,18 +85,18 @@ def generate_waveform(
     try:
         ch_idx = channel - 1
 
-        with dwf.Device(device_id=device_index) as device:
-            ch = device.analog_output[ch_idx]
-            ch.setup(
-                waveform,
-                frequency=frequency,
-                amplitude=amplitude,
-                offset=offset,
-                start=True,
-            )
-            if duration > 0:
-                time.sleep(duration)
-                ch.reset()
+        device = get_manager().acquire(device_index)
+        ch = device.analog_output[ch_idx]
+        ch.setup(
+            waveform,
+            frequency=frequency,
+            amplitude=amplitude,
+            offset=offset,
+            start=True,
+        )
+        if duration > 0:
+            time.sleep(duration)
+            ch.reset()
 
         return {
             "channel": channel,
@@ -104,6 +107,7 @@ def generate_waveform(
             "duration": duration if duration > 0 else "continuous",
         }
     except Exception as exc:  # noqa: BLE001
+        get_manager().release(device_index)
         return {"error": str(exc)}
 
 
@@ -128,23 +132,24 @@ def measure(
         buffer_size = int(sample_rate * duration)
         ch_idx = channel - 1
 
-        with dwf.Device(device_id=device_index) as device:
-            scope = device.analog_input
-            scope[ch_idx].setup(enabled=True)
-            scope.setup_acquisition(sample_rate=sample_rate, buffer_size=buffer_size, start=True)
+        device = get_manager().acquire(device_index)
+        scope = device.analog_input
+        scope[ch_idx].setup(enabled=True)
+        scope.setup_acquisition(sample_rate=sample_rate, buffer_size=buffer_size, start=True)
 
-            timeout = max(duration * 10, 5.0)
-            deadline = time.monotonic() + timeout
-            while scope.read_status(read_data=True) != dwf.Status.DONE:
-                if time.monotonic() > deadline:
-                    return {"error": "Measurement timed out."}
-                time.sleep(0.001)
+        timeout = max(duration * 10, 5.0)
+        deadline = time.monotonic() + timeout
+        while scope.read_status(read_data=True) != dwf.Status.DONE:
+            if time.monotonic() > deadline:
+                return {"error": "Measurement timed out."}
+            time.sleep(0.001)
 
-            samples: list[float] = scope[ch_idx].get_data().tolist()
+        samples: list[float] = scope[ch_idx].get_data().tolist()
 
         value, unit = _compute_measurement(samples, measurement, sample_rate)
         return {"channel": channel, "measurement": measurement, "value": value, "unit": unit}
     except Exception as exc:  # noqa: BLE001
+        get_manager().release(device_index)
         return {"error": str(exc)}
 
 

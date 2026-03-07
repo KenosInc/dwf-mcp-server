@@ -4,6 +4,7 @@ import asyncio
 import importlib
 import logging
 import math
+import time
 from unittest.mock import MagicMock, mock_open, patch
 
 import pytest
@@ -12,12 +13,14 @@ from fastmcp import FastMCP
 import dwf_mcp_server.server as srv
 import dwf_mcp_server.tools.analog as analog_mod
 from dwf_mcp_server.diagnostics import check_environment
+from dwf_mcp_server.session import DeviceManager
 from dwf_mcp_server.tools.analog import analog_capture, generate_waveform, measure
 from dwf_mcp_server.tools.devices import device_info, list_devices
 from dwf_mcp_server.tools.digital import digital_capture
 from dwf_mcp_server.tools.gpio import gpio_read, gpio_write
 from dwf_mcp_server.tools.power import power_supply
 from dwf_mcp_server.tools.protocols import spi_transfer
+from dwf_mcp_server.tools.session_tools import close_device, device_session_status
 
 
 def _make_device_info(
@@ -30,6 +33,13 @@ def _make_device_info(
     info.serial_number = serial
     info.is_open = is_open
     return info
+
+
+def _make_manager_mock(device_mock: MagicMock | None = None) -> MagicMock:
+    """Create a manager mock that returns a device mock from acquire()."""
+    manager = MagicMock()
+    manager.acquire.return_value = device_mock or MagicMock()
+    return manager
 
 
 # ---------------------------------------------------------------------------
@@ -93,10 +103,11 @@ class TestDeviceInfo:
 
         assert result["index"] == 0
         assert result["name"] == "Analog Discovery 2"
-        assert "error" not in result
+        assert result["serial"] == "SN12345"
+        assert result["is_open"] is False
 
-    def test_returns_error_for_out_of_range_index(self) -> None:
-        """Returns an error when device_index exceeds available devices."""
+    def test_index_out_of_range(self) -> None:
+        """Returns an error when the index is out of range."""
         dwf_mock = MagicMock()
         dwf_mock.Device.enumerate.return_value = [_make_device_info()]
 
@@ -191,7 +202,7 @@ class TestServerRegistration:
         assert isinstance(srv.mcp, FastMCP)
 
     def test_tools_registered(self) -> None:
-        """All ten tools are registered on the server."""
+        """All twelve tools are registered on the server."""
         tools = asyncio.run(srv.mcp.list_tools())
         tool_names = {t.name for t in tools}
         expected = {
@@ -205,8 +216,197 @@ class TestServerRegistration:
             "gpio_write",
             "power_supply",
             "spi_transfer",
+            "close_device",
+            "device_session_status",
         }
         assert expected.issubset(tool_names)
+
+
+# ---------------------------------------------------------------------------
+# session.DeviceManager
+# ---------------------------------------------------------------------------
+
+
+class TestDeviceManager:
+    def test_acquire_opens_device(self) -> None:
+        """acquire() creates a new device and calls open()."""
+        dwf_mock = MagicMock()
+        device_mock = dwf_mock.Device.return_value
+
+        with patch("dwf_mcp_server.session.dwf", dwf_mock):
+            mgr = DeviceManager(timeout=300)
+            result = mgr.acquire(0)
+
+        dwf_mock.Device.assert_called_once_with(device_id=0)
+        device_mock.open.assert_called_once()
+        assert result is device_mock
+        mgr.release_all()
+
+    def test_acquire_returns_same_device(self) -> None:
+        """Second acquire() returns the cached device without opening again."""
+        dwf_mock = MagicMock()
+
+        with patch("dwf_mcp_server.session.dwf", dwf_mock):
+            mgr = DeviceManager(timeout=300)
+            d1 = mgr.acquire(0)
+            d2 = mgr.acquire(0)
+
+        assert d1 is d2
+        dwf_mock.Device.assert_called_once()
+        mgr.release_all()
+
+    def test_release_closes_device(self) -> None:
+        """release() calls device.close() and returns True."""
+        dwf_mock = MagicMock()
+        device_mock = dwf_mock.Device.return_value
+
+        with patch("dwf_mcp_server.session.dwf", dwf_mock):
+            mgr = DeviceManager(timeout=300)
+            mgr.acquire(0)
+            result = mgr.release(0)
+
+        assert result is True
+        device_mock.close.assert_called_once()
+
+    def test_release_unopened_returns_false(self) -> None:
+        """release() on an unopened device returns False."""
+        mgr = DeviceManager(timeout=300)
+        assert mgr.release(0) is False
+
+    def test_release_all(self) -> None:
+        """release_all() closes all open devices."""
+        dwf_mock = MagicMock()
+
+        with patch("dwf_mcp_server.session.dwf", dwf_mock):
+            mgr = DeviceManager(timeout=300)
+            mgr.acquire(0)
+            mgr.acquire(1)
+            mgr.release_all()
+
+        assert not mgr.is_open(0)
+        assert not mgr.is_open(1)
+
+    def test_is_open(self) -> None:
+        """is_open() returns True when acquired, False after release."""
+        dwf_mock = MagicMock()
+
+        with patch("dwf_mcp_server.session.dwf", dwf_mock):
+            mgr = DeviceManager(timeout=300)
+            assert mgr.is_open(0) is False
+            mgr.acquire(0)
+            assert mgr.is_open(0) is True
+            mgr.release(0)
+            assert mgr.is_open(0) is False
+
+    def test_timeout_auto_close(self) -> None:
+        """Device is auto-closed after idle timeout."""
+        dwf_mock = MagicMock()
+        device_mock = dwf_mock.Device.return_value
+
+        with patch("dwf_mcp_server.session.dwf", dwf_mock):
+            mgr = DeviceManager(timeout=0.1)
+            mgr.acquire(0)
+            time.sleep(0.3)
+
+        assert mgr.is_open(0) is False
+        device_mock.close.assert_called_once()
+
+    def test_acquire_resets_timeout(self) -> None:
+        """Re-acquiring resets the idle timer."""
+        dwf_mock = MagicMock()
+
+        with patch("dwf_mcp_server.session.dwf", dwf_mock):
+            mgr = DeviceManager(timeout=0.3)
+            mgr.acquire(0)
+            time.sleep(0.15)
+            mgr.acquire(0)  # reset timer
+            time.sleep(0.15)
+            # Should still be open (0.15 < 0.3 since timer was reset)
+            assert mgr.is_open(0) is True
+            mgr.release_all()
+
+    def test_acquire_propagates_open_error(self) -> None:
+        """If device.open() raises, the exception propagates."""
+        dwf_mock = MagicMock()
+        dwf_mock.Device.return_value.open.side_effect = RuntimeError("USB error")
+
+        with (
+            patch("dwf_mcp_server.session.dwf", dwf_mock),
+            pytest.raises(RuntimeError, match="USB error"),
+        ):
+            mgr = DeviceManager(timeout=300)
+            mgr.acquire(0)
+
+    def test_release_swallows_close_error(self) -> None:
+        """If device.close() raises, the error is logged but not raised."""
+        dwf_mock = MagicMock()
+        device_mock = dwf_mock.Device.return_value
+        device_mock.close.side_effect = RuntimeError("close failed")
+
+        with patch("dwf_mcp_server.session.dwf", dwf_mock):
+            mgr = DeviceManager(timeout=300)
+            mgr.acquire(0)
+            result = mgr.release(0)
+
+        assert result is True
+        assert mgr.is_open(0) is False
+
+
+# ---------------------------------------------------------------------------
+# session_tools.close_device
+# ---------------------------------------------------------------------------
+
+
+class TestCloseDevice:
+    def test_close_open_device(self) -> None:
+        """Closing an open device returns closed=True."""
+        manager_mock = MagicMock()
+        manager_mock.release.return_value = True
+
+        with patch("dwf_mcp_server.tools.session_tools.get_manager", return_value=manager_mock):
+            result = close_device(device_index=0)
+
+        assert result["device_index"] == 0
+        assert result["closed"] is True
+        manager_mock.release.assert_called_once_with(0)
+
+    def test_close_unopened_device(self) -> None:
+        """Closing an unopened device returns closed=False."""
+        manager_mock = MagicMock()
+        manager_mock.release.return_value = False
+
+        with patch("dwf_mcp_server.tools.session_tools.get_manager", return_value=manager_mock):
+            result = close_device(device_index=1)
+
+        assert result["device_index"] == 1
+        assert result["closed"] is False
+
+
+# ---------------------------------------------------------------------------
+# session_tools.device_session_status
+# ---------------------------------------------------------------------------
+
+
+class TestDeviceSessionStatus:
+    def test_session_open(self) -> None:
+        """Returns session_open=True when device is open."""
+        manager_mock = MagicMock()
+        manager_mock.is_open.return_value = True
+
+        with patch("dwf_mcp_server.tools.session_tools.get_manager", return_value=manager_mock):
+            result = device_session_status(device_index=0)
+
+        assert result["session_open"] is True
+
+    def test_session_closed(self) -> None:
+        """Returns session_open=False when device is not open."""
+        manager_mock = MagicMock()
+        manager_mock.is_open.return_value = False
+
+        with patch("dwf_mcp_server.tools.session_tools.get_manager", return_value=manager_mock):
+            result = device_session_status(device_index=0)
+
+        assert result["session_open"] is False
 
 
 # ---------------------------------------------------------------------------
@@ -215,20 +415,17 @@ class TestServerRegistration:
 
 
 class TestPowerSupply:
-    def _make_dwf_mock(self) -> MagicMock:
-        """Create a dwf mock with analog_io support."""
-        return MagicMock()
-
-    def _get_aio(self, dwf_mock: MagicMock) -> MagicMock:
-        """Get the analog_io mock from the device context."""
-        return dwf_mock.Device.return_value.__enter__.return_value.analog_io
+    def _make_mocks(self) -> tuple[MagicMock, MagicMock]:
+        """Create a manager mock with analog_io support. Returns (manager_mock, aio_mock)."""
+        device_mock = MagicMock()
+        manager_mock = _make_manager_mock(device_mock)
+        return manager_mock, device_mock.analog_io
 
     def test_enable_sets_voltages_and_master(self) -> None:
         """Enabling sets both channel voltages, enables channels, and master."""
-        dwf_mock = self._make_dwf_mock()
-        aio = self._get_aio(dwf_mock)
+        manager_mock, aio = self._make_mocks()
 
-        with patch("dwf_mcp_server.tools.power.dwf", dwf_mock):
+        with patch("dwf_mcp_server.tools.power.get_manager", return_value=manager_mock):
             result = power_supply(positive_voltage=3.3, negative_voltage=-3.3, enabled=True)
 
         assert "error" not in result
@@ -241,10 +438,9 @@ class TestPowerSupply:
 
     def test_disable_sets_master_false_and_channel_enables(self) -> None:
         """Disabling sets channel enables and master_enable to False."""
-        dwf_mock = self._make_dwf_mock()
-        aio = self._get_aio(dwf_mock)
+        manager_mock, aio = self._make_mocks()
 
-        with patch("dwf_mcp_server.tools.power.dwf", dwf_mock):
+        with patch("dwf_mcp_server.tools.power.get_manager", return_value=manager_mock):
             result = power_supply(enabled=False)
 
         assert "error" not in result
@@ -257,9 +453,9 @@ class TestPowerSupply:
 
     def test_default_voltages(self) -> None:
         """Default voltages are 5.0 and -5.0."""
-        dwf_mock = self._make_dwf_mock()
+        manager_mock, _ = self._make_mocks()
 
-        with patch("dwf_mcp_server.tools.power.dwf", dwf_mock):
+        with patch("dwf_mcp_server.tools.power.get_manager", return_value=manager_mock):
             result = power_supply()
 
         assert result["positive_voltage"] == 5.0
@@ -291,10 +487,10 @@ class TestPowerSupply:
 
     def test_device_exception_returns_error(self) -> None:
         """Device-level exception is caught and returned as error dict."""
-        dwf_mock = MagicMock()
-        dwf_mock.Device.side_effect = RuntimeError("No device found")
+        manager_mock = MagicMock()
+        manager_mock.acquire.side_effect = RuntimeError("No device found")
 
-        with patch("dwf_mcp_server.tools.power.dwf", dwf_mock):
+        with patch("dwf_mcp_server.tools.power.get_manager", return_value=manager_mock):
             result = power_supply()
 
         assert "error" in result
@@ -307,19 +503,19 @@ class TestPowerSupply:
 
 
 class TestSpiTransfer:
-    def _make_dwf_mock(self) -> MagicMock:
-        """Create a dwf mock with SPI protocol support."""
-        dwf_mock = MagicMock()
-        spi_mock = dwf_mock.Device.return_value.__enter__.return_value.protocols.spi
+    def _make_mocks(self) -> tuple[MagicMock, MagicMock]:
+        """Create manager mock with SPI support. Returns (manager_mock, spi_mock)."""
+        device_mock = MagicMock()
+        spi_mock = device_mock.protocols.spi
         spi_mock.write_read.return_value = b"\xaa\xbb\xcc"
-        return dwf_mock
+        manager_mock = _make_manager_mock(device_mock)
+        return manager_mock, spi_mock
 
     def test_write_only(self) -> None:
         """Write-only transfer (no MISO) returns mosi hex and null miso."""
-        dwf_mock = self._make_dwf_mock()
-        spi_mock = dwf_mock.Device.return_value.__enter__.return_value.protocols.spi
+        manager_mock, spi_mock = self._make_mocks()
 
-        with patch("dwf_mcp_server.tools.protocols.dwf", dwf_mock):
+        with patch("dwf_mcp_server.tools.protocols.get_manager", return_value=manager_mock):
             result = spi_transfer(clock_pin=1, mosi_pin=2, cs_pin=0, mosi_data="180001")
 
         assert result["mosi"] == "180001"
@@ -340,9 +536,9 @@ class TestSpiTransfer:
 
     def test_write_read(self) -> None:
         """Full-duplex transfer (with MISO) returns both mosi and miso hex."""
-        dwf_mock = self._make_dwf_mock()
+        manager_mock, _ = self._make_mocks()
 
-        with patch("dwf_mcp_server.tools.protocols.dwf", dwf_mock):
+        with patch("dwf_mcp_server.tools.protocols.get_manager", return_value=manager_mock):
             result = spi_transfer(
                 clock_pin=1,
                 mosi_pin=2,
@@ -375,10 +571,10 @@ class TestSpiTransfer:
 
     def test_device_exception_returns_error(self) -> None:
         """Device-level exception is caught and returned as error dict."""
-        dwf_mock = MagicMock()
-        dwf_mock.Device.side_effect = RuntimeError("No device found")
+        manager_mock = MagicMock()
+        manager_mock.acquire.side_effect = RuntimeError("No device found")
 
-        with patch("dwf_mcp_server.tools.protocols.dwf", dwf_mock):
+        with patch("dwf_mcp_server.tools.protocols.get_manager", return_value=manager_mock):
             result = spi_transfer(clock_pin=1, mosi_pin=2, cs_pin=0, mosi_data="ff")
 
         assert "error" in result
@@ -391,19 +587,19 @@ class TestSpiTransfer:
 
 
 class TestGpioRead:
-    def _make_dwf_mock(self, input_state: bool = True) -> MagicMock:
-        """Create a dwf mock with digital I/O support for reading."""
-        dwf_mock = MagicMock()
-        device_mock = dwf_mock.Device.return_value.__enter__.return_value
+    def _make_mocks(self, input_state: bool = True) -> tuple[MagicMock, MagicMock]:
+        """Create manager mock with digital I/O for reading. Returns (manager_mock, dio_mock)."""
+        device_mock = MagicMock()
         dio_mock = device_mock.digital_io
         dio_mock.__getitem__.return_value.input_state = input_state
-        return dwf_mock
+        manager_mock = _make_manager_mock(device_mock)
+        return manager_mock, dio_mock
 
     def test_happy_path_high(self) -> None:
         """Reads a HIGH pin and returns pin number and value."""
-        dwf_mock = self._make_dwf_mock(input_state=True)
+        manager_mock, _ = self._make_mocks(input_state=True)
 
-        with patch("dwf_mcp_server.tools.gpio.dwf", dwf_mock):
+        with patch("dwf_mcp_server.tools.gpio.get_manager", return_value=manager_mock):
             result = gpio_read(pin=0)
 
         assert "error" not in result
@@ -412,9 +608,9 @@ class TestGpioRead:
 
     def test_happy_path_low(self) -> None:
         """Reads a LOW pin and returns pin number and value."""
-        dwf_mock = self._make_dwf_mock(input_state=False)
+        manager_mock, _ = self._make_mocks(input_state=False)
 
-        with patch("dwf_mcp_server.tools.gpio.dwf", dwf_mock):
+        with patch("dwf_mcp_server.tools.gpio.get_manager", return_value=manager_mock):
             result = gpio_read(pin=5)
 
         assert "error" not in result
@@ -423,23 +619,19 @@ class TestGpioRead:
 
     def test_pin_indexing(self) -> None:
         """Pin 3 (0-based) is passed directly to dwfpy as index 3."""
-        dwf_mock = self._make_dwf_mock()
-        device_mock = dwf_mock.Device.return_value.__enter__.return_value
-        dio_mock = device_mock.digital_io
+        manager_mock, dio_mock = self._make_mocks()
 
-        with patch("dwf_mcp_server.tools.gpio.dwf", dwf_mock):
+        with patch("dwf_mcp_server.tools.gpio.get_manager", return_value=manager_mock):
             gpio_read(pin=3)
 
         dio_mock.__getitem__.assert_called_with(3)
 
     def test_auto_configures_as_input(self) -> None:
         """Pin is configured as input (enabled=False) before reading."""
-        dwf_mock = self._make_dwf_mock()
-        device_mock = dwf_mock.Device.return_value.__enter__.return_value
-        dio_mock = device_mock.digital_io
+        manager_mock, dio_mock = self._make_mocks()
         channel_mock = dio_mock.__getitem__.return_value
 
-        with patch("dwf_mcp_server.tools.gpio.dwf", dwf_mock):
+        with patch("dwf_mcp_server.tools.gpio.get_manager", return_value=manager_mock):
             gpio_read(pin=0)
 
         channel_mock.setup.assert_called_once_with(enabled=False, configure=True)
@@ -447,11 +639,9 @@ class TestGpioRead:
 
     def test_max_pin_succeeds(self) -> None:
         """Pin 15 (the maximum) succeeds and is passed directly to dwfpy."""
-        dwf_mock = self._make_dwf_mock()
-        device_mock = dwf_mock.Device.return_value.__enter__.return_value
-        dio_mock = device_mock.digital_io
+        manager_mock, dio_mock = self._make_mocks()
 
-        with patch("dwf_mcp_server.tools.gpio.dwf", dwf_mock):
+        with patch("dwf_mcp_server.tools.gpio.get_manager", return_value=manager_mock):
             result = gpio_read(pin=15)
 
         assert "error" not in result
@@ -472,23 +662,23 @@ class TestGpioRead:
 
     def test_device_exception_returns_error(self) -> None:
         """Device open exception is caught and returned as error dict."""
-        dwf_mock = MagicMock()
-        dwf_mock.Device.side_effect = RuntimeError("No device found")
+        manager_mock = MagicMock()
+        manager_mock.acquire.side_effect = RuntimeError("No device found")
 
-        with patch("dwf_mcp_server.tools.gpio.dwf", dwf_mock):
+        with patch("dwf_mcp_server.tools.gpio.get_manager", return_value=manager_mock):
             result = gpio_read(pin=0)
 
         assert "error" in result
         assert "No device found" in result["error"]
 
     def test_device_index_forwarded(self) -> None:
-        """Non-default device_index is forwarded to dwf.Device."""
-        dwf_mock = self._make_dwf_mock()
+        """Non-default device_index is forwarded to manager.acquire."""
+        manager_mock, _ = self._make_mocks()
 
-        with patch("dwf_mcp_server.tools.gpio.dwf", dwf_mock):
+        with patch("dwf_mcp_server.tools.gpio.get_manager", return_value=manager_mock):
             gpio_read(pin=0, device_index=2)
 
-        dwf_mock.Device.assert_called_once_with(device_id=2)
+        manager_mock.acquire.assert_called_once_with(2)
 
 
 # ---------------------------------------------------------------------------
@@ -497,16 +687,17 @@ class TestGpioRead:
 
 
 class TestGpioWrite:
-    def _make_dwf_mock(self) -> MagicMock:
-        """Create a dwf mock with digital I/O support for writing."""
-        dwf_mock = MagicMock()
-        return dwf_mock
+    def _make_mocks(self) -> tuple[MagicMock, MagicMock]:
+        """Create manager mock with digital I/O for writing. Returns (manager_mock, dio_mock)."""
+        device_mock = MagicMock()
+        manager_mock = _make_manager_mock(device_mock)
+        return manager_mock, device_mock.digital_io
 
     def test_happy_path_set_high(self) -> None:
         """Sets a pin HIGH and returns pin number and value."""
-        dwf_mock = self._make_dwf_mock()
+        manager_mock, _ = self._make_mocks()
 
-        with patch("dwf_mcp_server.tools.gpio.dwf", dwf_mock):
+        with patch("dwf_mcp_server.tools.gpio.get_manager", return_value=manager_mock):
             result = gpio_write(pin=0, value=True)
 
         assert "error" not in result
@@ -515,9 +706,9 @@ class TestGpioWrite:
 
     def test_happy_path_set_low(self) -> None:
         """Sets a pin LOW and returns pin number and value."""
-        dwf_mock = self._make_dwf_mock()
+        manager_mock, _ = self._make_mocks()
 
-        with patch("dwf_mcp_server.tools.gpio.dwf", dwf_mock):
+        with patch("dwf_mcp_server.tools.gpio.get_manager", return_value=manager_mock):
             result = gpio_write(pin=8, value=False)
 
         assert "error" not in result
@@ -526,35 +717,29 @@ class TestGpioWrite:
 
     def test_pin_indexing(self) -> None:
         """Pin 5 (0-based) is passed directly to dwfpy as index 5."""
-        dwf_mock = self._make_dwf_mock()
-        device_mock = dwf_mock.Device.return_value.__enter__.return_value
-        dio_mock = device_mock.digital_io
+        manager_mock, dio_mock = self._make_mocks()
 
-        with patch("dwf_mcp_server.tools.gpio.dwf", dwf_mock):
+        with patch("dwf_mcp_server.tools.gpio.get_manager", return_value=manager_mock):
             gpio_write(pin=5, value=True)
 
         dio_mock.__getitem__.assert_called_with(5)
 
     def test_configures_as_output_with_state(self) -> None:
         """Pin is configured as output (enabled=True) with the requested state."""
-        dwf_mock = self._make_dwf_mock()
-        device_mock = dwf_mock.Device.return_value.__enter__.return_value
-        dio_mock = device_mock.digital_io
+        manager_mock, dio_mock = self._make_mocks()
         channel_mock = dio_mock.__getitem__.return_value
 
-        with patch("dwf_mcp_server.tools.gpio.dwf", dwf_mock):
+        with patch("dwf_mcp_server.tools.gpio.get_manager", return_value=manager_mock):
             gpio_write(pin=0, value=True)
 
         channel_mock.setup.assert_called_once_with(enabled=True, state=True, configure=True)
 
     def test_configures_as_output_with_state_low(self) -> None:
         """Pin is configured as output with state=False when value is False."""
-        dwf_mock = self._make_dwf_mock()
-        device_mock = dwf_mock.Device.return_value.__enter__.return_value
-        dio_mock = device_mock.digital_io
+        manager_mock, dio_mock = self._make_mocks()
         channel_mock = dio_mock.__getitem__.return_value
 
-        with patch("dwf_mcp_server.tools.gpio.dwf", dwf_mock):
+        with patch("dwf_mcp_server.tools.gpio.get_manager", return_value=manager_mock):
             gpio_write(pin=0, value=False)
 
         channel_mock.setup.assert_called_once_with(enabled=True, state=False, configure=True)
@@ -573,23 +758,23 @@ class TestGpioWrite:
 
     def test_device_exception_returns_error(self) -> None:
         """Device open exception is caught and returned as error dict."""
-        dwf_mock = MagicMock()
-        dwf_mock.Device.side_effect = RuntimeError("No device found")
+        manager_mock = MagicMock()
+        manager_mock.acquire.side_effect = RuntimeError("No device found")
 
-        with patch("dwf_mcp_server.tools.gpio.dwf", dwf_mock):
+        with patch("dwf_mcp_server.tools.gpio.get_manager", return_value=manager_mock):
             result = gpio_write(pin=0, value=True)
 
         assert "error" in result
         assert "No device found" in result["error"]
 
     def test_device_index_forwarded(self) -> None:
-        """Non-default device_index is forwarded to dwf.Device."""
-        dwf_mock = self._make_dwf_mock()
+        """Non-default device_index is forwarded to manager.acquire."""
+        manager_mock, _ = self._make_mocks()
 
-        with patch("dwf_mcp_server.tools.gpio.dwf", dwf_mock):
+        with patch("dwf_mcp_server.tools.gpio.get_manager", return_value=manager_mock):
             gpio_write(pin=0, value=True, device_index=3)
 
-        dwf_mock.Device.assert_called_once_with(device_id=3)
+        manager_mock.acquire.assert_called_once_with(3)
 
 
 # ---------------------------------------------------------------------------
@@ -598,22 +783,28 @@ class TestGpioWrite:
 
 
 class TestAnalogCapture:
-    def _make_dwf_mock(self, samples: list[float] | None = None) -> MagicMock:
-        """Create a dwf mock with oscilloscope support."""
+    def _make_mocks(
+        self, samples: list[float] | None = None
+    ) -> tuple[MagicMock, MagicMock, MagicMock]:
+        """Create mocks for analog capture. Returns (manager_mock, dwf_mock, scope_mock)."""
         if samples is None:
             samples = [0.1, 0.2, 0.3]
         dwf_mock = MagicMock()
-        device_mock = dwf_mock.Device.return_value.__enter__.return_value
+        device_mock = MagicMock()
         scope_mock = device_mock.analog_input
         scope_mock.read_status.return_value = dwf_mock.Status.DONE
         scope_mock.__getitem__.return_value.get_data.return_value.tolist.return_value = samples
-        return dwf_mock
+        manager_mock = _make_manager_mock(device_mock)
+        return manager_mock, dwf_mock, scope_mock
 
     def test_happy_path(self) -> None:
         """End-to-end capture returns samples and metadata."""
-        dwf_mock = self._make_dwf_mock([1.0, 2.0, 3.0])
+        manager_mock, dwf_mock, _ = self._make_mocks([1.0, 2.0, 3.0])
 
-        with patch("dwf_mcp_server.tools.analog.dwf", dwf_mock):
+        with (
+            patch("dwf_mcp_server.tools.analog.dwf", dwf_mock),
+            patch("dwf_mcp_server.tools.analog.get_manager", return_value=manager_mock),
+        ):
             result = analog_capture(channel=1, sample_rate=1000.0, duration=0.003)
 
         assert "error" not in result
@@ -626,11 +817,12 @@ class TestAnalogCapture:
 
     def test_asserts_correct_method_calls(self) -> None:
         """Verifies setup_acquisition and channel setup are called with correct args."""
-        dwf_mock = self._make_dwf_mock()
-        device_mock = dwf_mock.Device.return_value.__enter__.return_value
-        scope_mock = device_mock.analog_input
+        manager_mock, dwf_mock, scope_mock = self._make_mocks()
 
-        with patch("dwf_mcp_server.tools.analog.dwf", dwf_mock):
+        with (
+            patch("dwf_mcp_server.tools.analog.dwf", dwf_mock),
+            patch("dwf_mcp_server.tools.analog.get_manager", return_value=manager_mock),
+        ):
             analog_capture(channel=1, sample_rate=1_000_000.0, duration=0.001, voltage_range=5.0)
 
         scope_mock.__getitem__.assert_any_call(0)
@@ -642,11 +834,12 @@ class TestAnalogCapture:
 
     def test_channel_indexing(self) -> None:
         """Channel 2 maps to 0-based index 1."""
-        dwf_mock = self._make_dwf_mock()
-        device_mock = dwf_mock.Device.return_value.__enter__.return_value
-        scope_mock = device_mock.analog_input
+        manager_mock, dwf_mock, scope_mock = self._make_mocks()
 
-        with patch("dwf_mcp_server.tools.analog.dwf", dwf_mock):
+        with (
+            patch("dwf_mcp_server.tools.analog.dwf", dwf_mock),
+            patch("dwf_mcp_server.tools.analog.get_manager", return_value=manager_mock),
+        ):
             result = analog_capture(channel=2)
 
         assert result["channel"] == 2
@@ -654,14 +847,13 @@ class TestAnalogCapture:
 
     def test_timeout_returns_error(self) -> None:
         """Returns error when acquisition never completes."""
-        dwf_mock = MagicMock()
-        device_mock = dwf_mock.Device.return_value.__enter__.return_value
+        device_mock = MagicMock()
         scope_mock = device_mock.analog_input
-        # read_status never returns DONE
         scope_mock.read_status.return_value = MagicMock()
+        manager_mock = _make_manager_mock(device_mock)
 
         with (
-            patch("dwf_mcp_server.tools.analog.dwf", dwf_mock),
+            patch("dwf_mcp_server.tools.analog.get_manager", return_value=manager_mock),
             patch("dwf_mcp_server.tools.analog.time") as time_mock,
         ):
             # First call to monotonic() sets deadline, subsequent calls exceed it
@@ -673,20 +865,23 @@ class TestAnalogCapture:
         assert "timed out" in result["error"].lower()
 
     def test_device_index_forwarded(self) -> None:
-        """Non-default device_index is forwarded to dwf.Device."""
-        dwf_mock = self._make_dwf_mock()
+        """Non-default device_index is forwarded to manager.acquire."""
+        manager_mock, dwf_mock, _ = self._make_mocks()
 
-        with patch("dwf_mcp_server.tools.analog.dwf", dwf_mock):
+        with (
+            patch("dwf_mcp_server.tools.analog.dwf", dwf_mock),
+            patch("dwf_mcp_server.tools.analog.get_manager", return_value=manager_mock),
+        ):
             analog_capture(device_index=2)
 
-        dwf_mock.Device.assert_called_once_with(device_id=2)
+        manager_mock.acquire.assert_called_once_with(2)
 
     def test_device_exception_returns_error(self) -> None:
         """Device open exception is caught and returned as error dict."""
-        dwf_mock = MagicMock()
-        dwf_mock.Device.side_effect = RuntimeError("No device found")
+        manager_mock = MagicMock()
+        manager_mock.acquire.side_effect = RuntimeError("No device found")
 
-        with patch("dwf_mcp_server.tools.analog.dwf", dwf_mock):
+        with patch("dwf_mcp_server.tools.analog.get_manager", return_value=manager_mock):
             result = analog_capture()
 
         assert "error" in result
@@ -699,18 +894,18 @@ class TestAnalogCapture:
 
 
 class TestGenerateWaveform:
-    def _make_dwf_mock(self) -> tuple[MagicMock, MagicMock]:
-        """Create a dwf mock with AWG support. Returns (dwf_mock, ch_mock)."""
-        dwf_mock = MagicMock()
-        device_mock = dwf_mock.Device.return_value.__enter__.return_value
+    def _make_mocks(self) -> tuple[MagicMock, MagicMock, MagicMock]:
+        """Create mocks for AWG. Returns (manager_mock, device_mock, ch_mock)."""
+        device_mock = MagicMock()
         ch_mock = device_mock.analog_output.__getitem__.return_value
-        return dwf_mock, ch_mock
+        manager_mock = _make_manager_mock(device_mock)
+        return manager_mock, device_mock, ch_mock
 
     def test_continuous_generation(self) -> None:
         """Continuous generation (duration=0) returns 'continuous' and no reset."""
-        dwf_mock, ch_mock = self._make_dwf_mock()
+        manager_mock, _, ch_mock = self._make_mocks()
 
-        with patch("dwf_mcp_server.tools.analog.dwf", dwf_mock):
+        with patch("dwf_mcp_server.tools.analog.get_manager", return_value=manager_mock):
             result = generate_waveform(channel=1, waveform="sine", duration=0.0)
 
         assert "error" not in result
@@ -720,10 +915,10 @@ class TestGenerateWaveform:
 
     def test_timed_generation(self) -> None:
         """Timed generation (duration>0) calls time.sleep and ch.reset."""
-        dwf_mock, ch_mock = self._make_dwf_mock()
+        manager_mock, _, ch_mock = self._make_mocks()
 
         with (
-            patch("dwf_mcp_server.tools.analog.dwf", dwf_mock),
+            patch("dwf_mcp_server.tools.analog.get_manager", return_value=manager_mock),
             patch("dwf_mcp_server.tools.analog.time") as time_mock,
         ):
             result = generate_waveform(channel=1, waveform="square", duration=0.5)
@@ -735,9 +930,9 @@ class TestGenerateWaveform:
 
     def test_asserts_correct_setup_call(self) -> None:
         """Verifies ch.setup is called with correct positional and keyword args."""
-        dwf_mock, ch_mock = self._make_dwf_mock()
+        manager_mock, _, ch_mock = self._make_mocks()
 
-        with patch("dwf_mcp_server.tools.analog.dwf", dwf_mock):
+        with patch("dwf_mcp_server.tools.analog.get_manager", return_value=manager_mock):
             generate_waveform(
                 channel=1,
                 waveform="triangle",
@@ -752,10 +947,9 @@ class TestGenerateWaveform:
 
     def test_channel_indexing(self) -> None:
         """Channel 2 maps to 0-based index 1."""
-        dwf_mock, _ = self._make_dwf_mock()
-        device_mock = dwf_mock.Device.return_value.__enter__.return_value
+        manager_mock, device_mock, _ = self._make_mocks()
 
-        with patch("dwf_mcp_server.tools.analog.dwf", dwf_mock):
+        with patch("dwf_mcp_server.tools.analog.get_manager", return_value=manager_mock):
             result = generate_waveform(channel=2)
 
         assert result["channel"] == 2
@@ -763,10 +957,10 @@ class TestGenerateWaveform:
 
     def test_device_exception_returns_error(self) -> None:
         """Device open exception is caught and returned as error dict."""
-        dwf_mock = MagicMock()
-        dwf_mock.Device.side_effect = RuntimeError("No device found")
+        manager_mock = MagicMock()
+        manager_mock.acquire.side_effect = RuntimeError("No device found")
 
-        with patch("dwf_mcp_server.tools.analog.dwf", dwf_mock):
+        with patch("dwf_mcp_server.tools.analog.get_manager", return_value=manager_mock):
             result = generate_waveform()
 
         assert "error" in result
@@ -779,22 +973,28 @@ class TestGenerateWaveform:
 
 
 class TestMeasure:
-    def _make_dwf_mock(self, samples: list[float] | None = None) -> MagicMock:
-        """Create a dwf mock with oscilloscope support for measurements."""
+    def _make_mocks(
+        self, samples: list[float] | None = None
+    ) -> tuple[MagicMock, MagicMock, MagicMock]:
+        """Create mocks for measure. Returns (manager_mock, dwf_mock, scope_mock)."""
         if samples is None:
             samples = [1.0, 2.0, 3.0]
         dwf_mock = MagicMock()
-        device_mock = dwf_mock.Device.return_value.__enter__.return_value
+        device_mock = MagicMock()
         scope_mock = device_mock.analog_input
         scope_mock.read_status.return_value = dwf_mock.Status.DONE
         scope_mock.__getitem__.return_value.get_data.return_value.tolist.return_value = samples
-        return dwf_mock
+        manager_mock = _make_manager_mock(device_mock)
+        return manager_mock, dwf_mock, scope_mock
 
     def test_happy_path(self) -> None:
         """End-to-end measure returns channel, measurement type, value, and unit."""
-        dwf_mock = self._make_dwf_mock([1.0, 2.0, 3.0])
+        manager_mock, dwf_mock, _ = self._make_mocks([1.0, 2.0, 3.0])
 
-        with patch("dwf_mcp_server.tools.analog.dwf", dwf_mock):
+        with (
+            patch("dwf_mcp_server.tools.analog.dwf", dwf_mock),
+            patch("dwf_mcp_server.tools.analog.get_manager", return_value=manager_mock),
+        ):
             result = measure(channel=1, measurement="dc")
 
         assert "error" not in result
@@ -805,10 +1005,12 @@ class TestMeasure:
 
     def test_rms_integration(self) -> None:
         """Measure with measurement='rms' flows through _compute_measurement correctly."""
-        # mean([1,-1,1,-1]) = 0.0, but RMS = 1.0 — distinguishes dc from rms
-        dwf_mock = self._make_dwf_mock([1.0, -1.0, 1.0, -1.0])
+        manager_mock, dwf_mock, _ = self._make_mocks([1.0, -1.0, 1.0, -1.0])
 
-        with patch("dwf_mcp_server.tools.analog.dwf", dwf_mock):
+        with (
+            patch("dwf_mcp_server.tools.analog.dwf", dwf_mock),
+            patch("dwf_mcp_server.tools.analog.get_manager", return_value=manager_mock),
+        ):
             result = measure(channel=1, measurement="rms")
 
         assert "error" not in result
@@ -818,22 +1020,24 @@ class TestMeasure:
 
     def test_setup_no_voltage_range(self) -> None:
         """Measure calls scope[ch].setup(enabled=True) without range argument."""
-        dwf_mock = self._make_dwf_mock()
-        device_mock = dwf_mock.Device.return_value.__enter__.return_value
-        scope_mock = device_mock.analog_input
+        manager_mock, dwf_mock, scope_mock = self._make_mocks()
 
-        with patch("dwf_mcp_server.tools.analog.dwf", dwf_mock):
+        with (
+            patch("dwf_mcp_server.tools.analog.dwf", dwf_mock),
+            patch("dwf_mcp_server.tools.analog.get_manager", return_value=manager_mock),
+        ):
             measure(channel=1)
 
         scope_mock.__getitem__.return_value.setup.assert_called_once_with(enabled=True)
 
     def test_setup_acquisition_called(self) -> None:
         """Verifies setup_acquisition is called with correct args."""
-        dwf_mock = self._make_dwf_mock()
-        device_mock = dwf_mock.Device.return_value.__enter__.return_value
-        scope_mock = device_mock.analog_input
+        manager_mock, dwf_mock, scope_mock = self._make_mocks()
 
-        with patch("dwf_mcp_server.tools.analog.dwf", dwf_mock):
+        with (
+            patch("dwf_mcp_server.tools.analog.dwf", dwf_mock),
+            patch("dwf_mcp_server.tools.analog.get_manager", return_value=manager_mock),
+        ):
             measure(sample_rate=1_000_000.0, duration=0.01)
 
         scope_mock.setup_acquisition.assert_called_once_with(
@@ -842,13 +1046,13 @@ class TestMeasure:
 
     def test_timeout_returns_error(self) -> None:
         """Returns error when measurement never completes."""
-        dwf_mock = MagicMock()
-        device_mock = dwf_mock.Device.return_value.__enter__.return_value
+        device_mock = MagicMock()
         scope_mock = device_mock.analog_input
         scope_mock.read_status.return_value = MagicMock()
+        manager_mock = _make_manager_mock(device_mock)
 
         with (
-            patch("dwf_mcp_server.tools.analog.dwf", dwf_mock),
+            patch("dwf_mcp_server.tools.analog.get_manager", return_value=manager_mock),
             patch("dwf_mcp_server.tools.analog.time") as time_mock,
         ):
             time_mock.monotonic.side_effect = [0.0, 100.0]
@@ -860,10 +1064,10 @@ class TestMeasure:
 
     def test_device_exception_returns_error(self) -> None:
         """Device open exception is caught and returned as error dict."""
-        dwf_mock = MagicMock()
-        dwf_mock.Device.side_effect = RuntimeError("No device found")
+        manager_mock = MagicMock()
+        manager_mock.acquire.side_effect = RuntimeError("No device found")
 
-        with patch("dwf_mcp_server.tools.analog.dwf", dwf_mock):
+        with patch("dwf_mcp_server.tools.analog.get_manager", return_value=manager_mock):
             result = measure()
 
         assert "error" in result
@@ -876,22 +1080,28 @@ class TestMeasure:
 
 
 class TestDigitalCapture:
-    def _make_dwf_mock(self, samples: list[int] | None = None) -> MagicMock:
-        """Create a dwf mock with logic analyzer support."""
+    def _make_mocks(
+        self, samples: list[int] | None = None
+    ) -> tuple[MagicMock, MagicMock, MagicMock]:
+        """Create mocks for digital capture. Returns (manager_mock, dwf_mock, la_mock)."""
         if samples is None:
             samples = [0b1111, 0b0101, 0b1010]
         dwf_mock = MagicMock()
-        device_mock = dwf_mock.Device.return_value.__enter__.return_value
+        device_mock = MagicMock()
         la_mock = device_mock.digital_input
         la_mock.read_status.return_value = dwf_mock.Status.DONE
         la_mock.get_data.return_value.tolist.return_value = samples
-        return dwf_mock
+        manager_mock = _make_manager_mock(device_mock)
+        return manager_mock, dwf_mock, la_mock
 
     def test_happy_path_all_channels(self) -> None:
         """Capture with channels=None returns all 16 channels, no masking."""
-        dwf_mock = self._make_dwf_mock([0xFF, 0x00, 0xAA])
+        manager_mock, dwf_mock, _ = self._make_mocks([0xFF, 0x00, 0xAA])
 
-        with patch("dwf_mcp_server.tools.digital.dwf", dwf_mock):
+        with (
+            patch("dwf_mcp_server.tools.digital.dwf", dwf_mock),
+            patch("dwf_mcp_server.tools.digital.get_manager", return_value=manager_mock),
+        ):
             result = digital_capture(channels=None, sample_rate=1000.0, duration=0.003)
 
         assert "error" not in result
@@ -905,24 +1115,25 @@ class TestDigitalCapture:
         """Capture with specific channels applies bitmask to samples."""
         # channels [0, 2] → mask = 0b101 = 5
         raw_samples = [0b1111, 0b0101, 0b1010]
-        dwf_mock = self._make_dwf_mock(raw_samples)
+        manager_mock, dwf_mock, _ = self._make_mocks(raw_samples)
 
-        with patch("dwf_mcp_server.tools.digital.dwf", dwf_mock):
+        with (
+            patch("dwf_mcp_server.tools.digital.dwf", dwf_mock),
+            patch("dwf_mcp_server.tools.digital.get_manager", return_value=manager_mock),
+        ):
             result = digital_capture(channels=[0, 2])
 
         assert result["channels"] == [0, 2]
-        # 0b1111 & 0b101 = 0b101 = 5
-        # 0b0101 & 0b101 = 0b101 = 5
-        # 0b1010 & 0b101 = 0b000 = 0
         assert result["samples"] == [5, 5, 0]
 
     def test_asserts_correct_method_calls(self) -> None:
         """Verifies setup_acquisition and read_status are called correctly."""
-        dwf_mock = self._make_dwf_mock()
-        device_mock = dwf_mock.Device.return_value.__enter__.return_value
-        la_mock = device_mock.digital_input
+        manager_mock, dwf_mock, la_mock = self._make_mocks()
 
-        with patch("dwf_mcp_server.tools.digital.dwf", dwf_mock):
+        with (
+            patch("dwf_mcp_server.tools.digital.dwf", dwf_mock),
+            patch("dwf_mcp_server.tools.digital.get_manager", return_value=manager_mock),
+        ):
             digital_capture(sample_rate=2_000_000.0, duration=0.001)
 
         la_mock.setup_acquisition.assert_called_once_with(
@@ -932,13 +1143,13 @@ class TestDigitalCapture:
 
     def test_timeout_returns_error(self) -> None:
         """Returns error when capture never completes."""
-        dwf_mock = MagicMock()
-        device_mock = dwf_mock.Device.return_value.__enter__.return_value
+        device_mock = MagicMock()
         la_mock = device_mock.digital_input
         la_mock.read_status.return_value = MagicMock()
+        manager_mock = _make_manager_mock(device_mock)
 
         with (
-            patch("dwf_mcp_server.tools.digital.dwf", dwf_mock),
+            patch("dwf_mcp_server.tools.digital.get_manager", return_value=manager_mock),
             patch("dwf_mcp_server.tools.digital.time") as time_mock,
         ):
             time_mock.monotonic.side_effect = [0.0, 100.0]
@@ -950,10 +1161,10 @@ class TestDigitalCapture:
 
     def test_device_exception_returns_error(self) -> None:
         """Device open exception is caught and returned as error dict."""
-        dwf_mock = MagicMock()
-        dwf_mock.Device.side_effect = RuntimeError("No device found")
+        manager_mock = MagicMock()
+        manager_mock.acquire.side_effect = RuntimeError("No device found")
 
-        with patch("dwf_mcp_server.tools.digital.dwf", dwf_mock):
+        with patch("dwf_mcp_server.tools.digital.get_manager", return_value=manager_mock):
             result = digital_capture()
 
         assert "error" in result

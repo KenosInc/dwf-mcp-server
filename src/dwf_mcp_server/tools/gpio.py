@@ -1,7 +1,8 @@
 """Static digital I/O (GPIO) tools for Digilent WaveForms."""
 
-import dwfpy as dwf
 from fastmcp import FastMCP
+
+from dwf_mcp_server.session import get_manager
 
 _MIN_PIN = 0
 _MAX_PIN = 15  # AD2/AD3 have 16 DIO pins (DIO0-DIO15)
@@ -23,14 +24,15 @@ def gpio_read(pin: int, device_index: int = 0) -> dict:
         return {"error": f"Pin {pin} out of range (must be {_MIN_PIN}-{_MAX_PIN})."}
 
     try:
-        with dwf.Device(device_id=device_index) as device:
-            dio = device.digital_io
-            dio[pin].setup(enabled=False, configure=True)
-            dio.read_status()
-            value = dio[pin].input_state
+        device = get_manager().acquire(device_index)
+        dio = device.digital_io
+        dio[pin].setup(enabled=False, configure=True)
+        dio.read_status()
+        value = dio[pin].input_state
 
         return {"pin": pin, "value": value}
     except Exception as exc:  # noqa: BLE001
+        get_manager().release(device_index)
         return {"error": str(exc)}
 
 
@@ -51,12 +53,13 @@ def gpio_write(pin: int, value: bool, device_index: int = 0) -> dict:
         return {"error": f"Pin {pin} out of range (must be {_MIN_PIN}-{_MAX_PIN})."}
 
     try:
-        with dwf.Device(device_id=device_index) as device:
-            dio = device.digital_io
-            dio[pin].setup(enabled=True, state=value, configure=True)
+        device = get_manager().acquire(device_index)
+        dio = device.digital_io
+        dio[pin].setup(enabled=True, state=value, configure=True)
 
         return {"pin": pin, "value": value}
     except Exception as exc:  # noqa: BLE001
+        get_manager().release(device_index)
         return {"error": str(exc)}
 
 
