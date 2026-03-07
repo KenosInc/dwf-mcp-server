@@ -1,7 +1,8 @@
 """Digital protocol tools (SPI, I2C, UART) for Digilent WaveForms."""
 
-import dwfpy as dwf
 from fastmcp import FastMCP
+
+from dwf_mcp_server.session import get_manager
 
 
 def spi_transfer(
@@ -45,46 +46,46 @@ def spi_transfer(
         return {"error": f"Invalid SPI mode: {mode}. Must be 0, 1, 2, or 3."}
 
     try:
-        with dwf.Device(device_id=device_index) as device:
-            spi = device.protocols.spi
-            spi.setup(
-                pin_clock=clock_pin,
-                pin_mosi=mosi_pin,
-                pin_miso=miso_pin,
-                pin_select=cs_pin,
-                frequency=clock_frequency,
-                mode=mode,
-                msb_first=True,
-            )
+        device = get_manager().acquire(device_index)
+        spi = device.protocols.spi
+        spi.setup(
+            pin_clock=clock_pin,
+            pin_mosi=mosi_pin,
+            pin_miso=miso_pin,
+            pin_select=cs_pin,
+            frequency=clock_frequency,
+            mode=mode,
+            msb_first=True,
+        )
 
-            total_bits = len(tx_bytes) * 8
-            spi.select("low")
-            try:
-                if miso_pin is not None:
-                    if total_bits <= 32:
-                        tx_int = int.from_bytes(tx_bytes, byteorder="big")
-                        rx_int = spi.write_read(
-                            tx_bytes,
-                            words_to_receive=len(tx_bytes),
-                            bits_per_word=bits_per_word,
-                        )
-                        miso_hex = bytes(rx_int).hex()
-                    else:
-                        rx_bytes = spi.write_read(
-                            tx_bytes,
-                            words_to_receive=len(tx_bytes),
-                            bits_per_word=bits_per_word,
-                        )
-                        miso_hex = bytes(rx_bytes).hex()
+        total_bits = len(tx_bytes) * 8
+        spi.select("low")
+        try:
+            if miso_pin is not None:
+                if total_bits <= 32:
+                    tx_int = int.from_bytes(tx_bytes, byteorder="big")
+                    rx_int = spi.write_read(
+                        tx_bytes,
+                        words_to_receive=len(tx_bytes),
+                        bits_per_word=bits_per_word,
+                    )
+                    miso_hex = bytes(rx_int).hex()
                 else:
-                    if total_bits <= 32:
-                        tx_int = int.from_bytes(tx_bytes, byteorder="big")
-                        spi.write_one(tx_int, bits_per_word=total_bits)
-                    else:
-                        spi.write(tx_bytes, bits_per_word=bits_per_word)
-                    miso_hex = None
-            finally:
-                spi.select("high")
+                    rx_bytes = spi.write_read(
+                        tx_bytes,
+                        words_to_receive=len(tx_bytes),
+                        bits_per_word=bits_per_word,
+                    )
+                    miso_hex = bytes(rx_bytes).hex()
+            else:
+                if total_bits <= 32:
+                    tx_int = int.from_bytes(tx_bytes, byteorder="big")
+                    spi.write_one(tx_int, bits_per_word=total_bits)
+                else:
+                    spi.write(tx_bytes, bits_per_word=bits_per_word)
+                miso_hex = None
+        finally:
+            spi.select("high")
 
         return {
             "mosi": mosi_data,
@@ -92,6 +93,7 @@ def spi_transfer(
             "bits_transferred": total_bits,
         }
     except Exception as exc:  # noqa: BLE001
+        get_manager().release(device_index)
         return {"error": str(exc)}
 
 

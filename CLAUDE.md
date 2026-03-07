@@ -48,17 +48,44 @@ Each tool module in `src/dwf_mcp_server/tools/` follows the same pattern:
 This design keeps tool functions callable directly (for testing) while letting `server.py` be the
 single registration point.
 
+### Device session lifecycle
+
+`session.py` contains a `DeviceManager` singleton that manages persistent device connections:
+
+- **Auto-connect**: `acquire(device_index)` opens the device on first use, returns the cached
+  handle on subsequent calls.
+- **Explicit close**: `release(device_index)` closes the device and stops all outputs.
+- **Idle timeout**: A 5-minute `threading.Timer` auto-closes idle devices.
+- **Thread safety**: All operations are protected by `threading.Lock`.
+
+Tool modules call `get_manager().acquire(device_index)` instead of `with dwf.Device(...)`.
+On exception, tools call `get_manager().release(device_index)` to clean up stale handles.
+
+Two session tools (`close_device`, `device_session_status`) are registered in `session_tools.py`.
+`server.py` includes a FastMCP lifespan handler that calls `release_all()` on shutdown.
+
 ### Mock strategy for tests
 
-All tests live in `tests/test_server.py` (single file) and run without hardware. Each tool module does `import dwfpy as dwf` at the top level.
-Tests mock the entire `dwf` namespace per-module:
+All tests live in `tests/test_server.py` (single file) and run without hardware.
 
+**Device tools (devices.py)** — unchanged, mock `dwf` directly:
 ```python
 with patch("dwf_mcp_server.tools.devices.dwf", dwf_mock):
     result = list_devices()
 ```
 
-The mock target is always `dwf_mcp_server.tools.<module>.dwf`, not the global `dwfpy`.
+**Tools using DeviceManager** — mock `get_manager` to return a manager whose `acquire()`
+yields a device mock:
+```python
+device_mock = MagicMock()
+manager_mock = MagicMock()
+manager_mock.acquire.return_value = device_mock
+with patch("dwf_mcp_server.tools.<module>.get_manager", return_value=manager_mock):
+    result = some_tool()
+```
+
+**Modules that also use `dwf.Status.DONE`** (analog, digital) need dual-patching:
+both `get_manager` and `dwf` are patched simultaneously.
 
 ### Error handling convention
 

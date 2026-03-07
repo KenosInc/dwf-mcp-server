@@ -5,6 +5,8 @@ import time
 import dwfpy as dwf
 from fastmcp import FastMCP
 
+from dwf_mcp_server.session import get_manager
+
 
 def digital_capture(
     channels: list[int] | None = None,
@@ -28,18 +30,18 @@ def digital_capture(
     try:
         buffer_size = int(sample_rate * duration)
 
-        with dwf.Device(device_id=device_index) as device:
-            la = device.digital_input
-            la.setup_acquisition(sample_rate=sample_rate, buffer_size=buffer_size, start=True)
+        device = get_manager().acquire(device_index)
+        la = device.digital_input
+        la.setup_acquisition(sample_rate=sample_rate, buffer_size=buffer_size, start=True)
 
-            timeout = max(duration * 10, 5.0)
-            deadline = time.monotonic() + timeout
-            while la.read_status(read_data=True) != dwf.Status.DONE:
-                if time.monotonic() > deadline:
-                    return {"error": "Capture timed out."}
-                time.sleep(0.001)
+        timeout = max(duration * 10, 5.0)
+        deadline = time.monotonic() + timeout
+        while la.read_status(read_data=True) != dwf.Status.DONE:
+            if time.monotonic() > deadline:
+                return {"error": "Capture timed out."}
+            time.sleep(0.001)
 
-            raw: list[int] = la.get_data().tolist()
+        raw: list[int] = la.get_data().tolist()
 
         # Filter to requested channels if specified
         if channels is not None:
@@ -57,6 +59,7 @@ def digital_capture(
             "samples": filtered,
         }
     except Exception as exc:  # noqa: BLE001
+        get_manager().release(device_index)
         return {"error": str(exc)}
 
 

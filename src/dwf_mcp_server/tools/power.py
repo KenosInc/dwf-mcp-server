@@ -1,7 +1,8 @@
 """Power supply control tools for Digilent WaveForms devices."""
 
-import dwfpy as dwf
 from fastmcp import FastMCP
+
+from dwf_mcp_server.session import get_manager
 
 
 def power_supply(
@@ -28,21 +29,21 @@ def power_supply(
             return {"error": f"negative_voltage {negative_voltage} out of range [-5.0, -0.5]."}
 
     try:
-        with dwf.Device(device_id=device_index) as device:
-            aio = device.analog_io
+        device = get_manager().acquire(device_index)
+        aio = device.analog_io
 
-            if enabled:
-                # Channel 0 = V+: node 0 = enable, node 1 = voltage
-                aio[0][1].value = positive_voltage
-                aio[0][0].value = True
-                # Channel 1 = V-: node 0 = enable, node 1 = voltage
-                aio[1][1].value = negative_voltage
-                aio[1][0].value = True
-            else:
-                aio[0][0].value = False
-                aio[1][0].value = False
+        if enabled:
+            # Channel 0 = V+: node 0 = enable, node 1 = voltage
+            aio[0][1].value = positive_voltage
+            aio[0][0].value = True
+            # Channel 1 = V-: node 0 = enable, node 1 = voltage
+            aio[1][1].value = negative_voltage
+            aio[1][0].value = True
+        else:
+            aio[0][0].value = False
+            aio[1][0].value = False
 
-            aio.master_enable = enabled
+        aio.master_enable = enabled
 
         result: dict = {"enabled": enabled}
         if enabled:
@@ -50,6 +51,7 @@ def power_supply(
             result["negative_voltage"] = negative_voltage
         return result
     except Exception as exc:  # noqa: BLE001
+        get_manager().release(device_index)
         return {"error": str(exc)}
 
 
