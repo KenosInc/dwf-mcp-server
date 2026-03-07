@@ -81,7 +81,7 @@ class DeviceManager:
             timer.cancel()
 
     def _on_timeout(self, device_index: int) -> None:
-        """Called when the idle timer fires."""
+        """Called by Timer thread when idle timeout fires; acquires lock via release()."""
         logger.info("Idle timeout reached for device %d, closing session.", device_index)
         self.release(device_index)
 
