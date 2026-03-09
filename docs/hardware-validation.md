@@ -102,6 +102,65 @@ Result: PASS — only CH4 bit present, reads HIGH.
 
 Result: PASS — only CH5 bit present, reads LOW.
 
+## SPI loopback (MOSI → MISO)
+
+### Setup
+
+DIO1 (MOSI) → DIO2 (MISO) connected with a single jumper wire on the AD3 pin header.
+Pin assignments: DIO0 = SCLK, DIO1 = MOSI, DIO2 = MISO, DIO3 = CS.
+
+All tests executed via MCP server (JSON-RPC over stdio).
+
+### dwfpy binding patch
+
+dwfpy <= 1.2.0 declares the `rgRX` parameter of `FDwfDigitalSpiWriteRead` as `_OUT`,
+causing ctypes to auto-allocate a single-element buffer. The `protocols.Spi.write_read`
+method passes the buffer explicitly, resulting in an argument count mismatch.
+A monkey-patch in `patches.py` redefines the bindings with `_IN` for `rgRX`.
+
+### Test 1 — Basic loopback (mode 0, 1 byte)
+
+```json
+{"mosi": "a5", "miso": "a5", "bits_transferred": 8}
+```
+
+Result: PASS — 0xA5 sent and received identically.
+
+### Test 2 — Multi-byte loopback (mode 0, 3 bytes)
+
+```json
+{"mosi": "deadbe", "miso": "deadbe", "bits_transferred": 24}
+```
+
+Result: PASS — 3-byte payload looped back correctly.
+
+### Tests 3–6 — All SPI modes (0–3)
+
+2-byte payload (0x55AA) tested across all four SPI modes.
+
+| Mode | CPOL | CPHA | MISO | Result |
+|------|------|------|------|--------|
+| 0 | 0 | 0 | 55aa | PASS |
+| 1 | 0 | 1 | 55aa | PASS |
+| 2 | 1 | 0 | 55aa | PASS |
+| 3 | 1 | 1 | 55aa | PASS |
+
+### Test 7 — Write-only (no MISO pin)
+
+```json
+{"mosi": "ff00", "miso": null, "bits_transferred": 16}
+```
+
+Result: PASS — write-only transfer completed, `miso` correctly null.
+
+### Test 8 — Larger payload (8 bytes)
+
+```json
+{"mosi": "0123456789abcdef", "miso": "0123456789abcdef", "bits_transferred": 64}
+```
+
+Result: PASS — 8-byte payload (64 bits) looped back correctly.
+
 ## Analog loopback (W1 → CH1)
 
 ### Setup
