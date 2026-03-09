@@ -1,12 +1,18 @@
 name: Publish to MCP Registry
 
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_run:
+    workflows:
+      - "Docker Publish"
+    types:
+      - completed
 
 jobs:
   publish:
+    # Only run when Docker Publish succeeded on a version tag
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      startsWith(github.event.workflow_run.head_branch, 'v')
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -14,6 +20,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.workflow_run.head_branch }}
 
       - name: Install mcp-publisher
         run: |
@@ -27,12 +35,14 @@ jobs:
 
       - name: Set version from tag
         run: |
-          VERSION=${GITHUB_REF#refs/tags/v}
+          VERSION=${{ github.event.workflow_run.head_branch }}
+          VERSION=${VERSION#v}
           jq --arg v "$VERSION" '.version = $v' server.json > server.tmp && mv server.tmp server.json
 
       - name: Update OCI image tag
         run: |
-          VERSION=${GITHUB_REF#refs/tags/v}
+          VERSION=${{ github.event.workflow_run.head_branch }}
+          VERSION=${VERSION#v}
           IMAGE="ghcr.io/kenosinc/dwf-mcp-server:${VERSION}"
           jq --arg id "$IMAGE" \
             '.packages[0].identifier = $id' \
