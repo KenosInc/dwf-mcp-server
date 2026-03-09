@@ -17,6 +17,7 @@
     "source=dwf-mcp-server-uv-cache,target=/home/vscode/.cache/uv,type=volume",
     "source=claude,target=/home/vscode/.claude,type=volume",
     "source=gh,target=/home/vscode/.config/gh,type=volume"
+    "source=venv,target=/home/vscode/.venv,type=volume"
   ],
   "features": {
     "ghcr.io/devcontainers/features/github-cli:1": {},
