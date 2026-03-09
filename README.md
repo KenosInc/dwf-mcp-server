@@ -17,6 +17,13 @@ Digilent WaveForms SDK (`libdwf`).
 - **Docker** installed on the host machine.
 - **No host-side WaveForms SDK installation is required.** The proprietary `libdwf.so` is added
   via a derived Dockerfile layer (see [Installation](#installation)).
+- **USB device permissions** — Digilent USB devices default to `root:root 0664`. If the container
+  cannot find any devices, add a udev rule on the host:
+  ```
+  # /etc/udev/rules.d/99-digilent.rules
+  SUBSYSTEM=="usb", ATTRS{idVendor}=="1443", MODE="0666"
+  ```
+  Then reload: `sudo udevadm control --reload-rules && sudo udevadm trigger`
 
 
 ## Installation
