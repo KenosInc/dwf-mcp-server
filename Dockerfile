@@ -56,4 +56,6 @@ RUN PY_SITE=$(python3 -c 'import sysconfig; print(sysconfig.get_path("purelib"))
 #       && rm -f /tmp/adept-runtime.deb /tmp/waveforms.deb \
 #       && rm -rf /var/lib/apt/lists/*
 
+LABEL io.modelcontextprotocol.server.name="io.github.KenosInc/dwf-mcp-server"
+
 CMD ["dwf-mcp-server"]
