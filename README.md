@@ -2,6 +2,8 @@
 
 MCP Server for [Digilent WaveForms](https://digilent.com/reference/software/waveforms/waveforms-3/start)
 instruments — oscilloscope, arbitrary waveform generator (AWG), and logic analyzer.
+Built on [dwfpy](https://github.com/mariusgreuel/dwfpy), a Python binding for the
+Digilent WaveForms SDK (`libdwf`).
 
 ## Supported Devices
 
@@ -15,6 +17,7 @@ instruments — oscilloscope, arbitrary waveform generator (AWG), and logic anal
 - **Docker** installed on the host machine.
 - **No host-side WaveForms SDK installation is required.** The proprietary `libdwf.so` is added
   via a derived Dockerfile layer (see [Installation](#installation)).
+
 
 ## Installation
 
