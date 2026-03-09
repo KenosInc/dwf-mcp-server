@@ -2,8 +2,10 @@ name: Publish to MCP Registry
 
 on:
   workflow_run:
-    workflows: ["Docker Publish"]
-    types: [completed]
+    workflows:
+      - "Docker Publish"
+    types:
+      - completed
 
 jobs:
   publish:
