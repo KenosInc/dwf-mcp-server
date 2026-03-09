@@ -34,3 +34,5 @@ htmlcov/
 
 # Local-only Dockerfiles (contain proprietary SDK references)
 Dockerfile.local
+captures/
+references/
