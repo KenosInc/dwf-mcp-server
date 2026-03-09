@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 
 from fastmcp import FastMCP
 
+from dwf_mcp_server import patches
 from dwf_mcp_server.diagnostics import check_environment
 from dwf_mcp_server.session import get_manager
 from dwf_mcp_server.tools import analog, devices, digital, gpio, power, protocols, session_tools
@@ -54,6 +55,7 @@ def main() -> None:
         format="%(levelname)s: %(message)s",
         stream=sys.stderr,
     )
+    patches.apply()
     if not check_environment():
         sys.exit(1)
     mcp.run()
