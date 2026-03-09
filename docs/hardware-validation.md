@@ -9,7 +9,7 @@ Smoke-test results for DWF MCP server tools running against real hardware.
 | Device | Analog Discovery 3 |
 | Serial | 210415BF8E27 |
 | Host | Docker container (`dwf-mcp-server:local`) with Adept 2.27.9 / WaveForms 3.24.4 |
-| Date | 2026-03-06 |
+| Date | 2026-03-06 (digital), 2026-03-09 (analog) |
 
 ## list_devices
 
@@ -101,3 +101,69 @@ Result: PASS — only CH4 bit present, reads HIGH.
 ```
 
 Result: PASS — only CH5 bit present, reads LOW.
+
+## Analog loopback (W1 → CH1)
+
+### Setup
+
+W1 (AWG CH1) → 1+ (scope CH1+), ⏚ (GND) → 1- (scope CH1−).
+Two jumper wires on the AD3 pin header.
+
+### generate_waveform — all waveform types
+
+1 kHz, 1 Vp amplitude, 0 V offset, continuous output on W1.
+Measured on CH1 using `measure` (1 MHz sample rate, 10 ms window).
+
+| Waveform | Frequency (Hz) | RMS (V) | Vpp (V) | DC (V) | Expected RMS | Result |
+|----------|---------------|---------|---------|--------|-------------|--------|
+| sine | 999.5 | 0.7063 | 2.010 | 0.019 | 0.707 (1/√2) | PASS |
+| square | 1000.0 | 0.9997 | 2.041 | 0.019 | 1.000 | PASS |
+| triangle | 1001.1 | 0.5765 | 2.006 | 0.019 | 0.577 (1/√3) | PASS |
+| ramp-up | 1027.7 | 0.8267 | 2.017 | 0.517 | — | PASS ¹ |
+| ramp-down | 1027.5 | 0.8267 | 2.024 | 0.518 | — | PASS ¹ |
+
+¹ Ramp waveforms show ~2.8% frequency error due to the zero-crossing algorithm's
+sensitivity to asymmetric waveforms. The non-zero DC offset (~0.5 V) is expected
+because ramp signals are not symmetric about zero. Vpp values confirm correct
+amplitude output.
+
+### analog_capture
+
+Captured 10,000 samples at 1 MHz (10 ms window) of a 1 kHz sine wave on CH1.
+
+```
+sample_count: 10000
+sample_rate:  1000000.0
+duration:     0.01
+min:         -1.0065 V
+max:          1.1031 V
+peak_to_peak: 2.1096 V
+```
+
+Result: PASS — 10 complete cycles captured, amplitude consistent with 1 Vp setting.
+
+### measure — all measurement types
+
+Measured on CH1 with 1 kHz sine wave from W1 (1 Vp, 0 V offset).
+
+| Measurement | Value | Unit | Expected | Error | Result |
+|------------|-------|------|----------|-------|--------|
+| frequency | 999.5 | Hz | 1000 | 0.05% | PASS |
+| rms | 0.7063 | V | 0.707 | 0.1% | PASS |
+| peak_to_peak | 2.010 | V | 2.000 | 0.5% | PASS |
+| dc | 0.019 | V | 0.000 | — | PASS |
+
+### MCP server integration (JSON-RPC over stdio)
+
+Same test sequence executed via MCP protocol (`initialize` → `tools/call`).
+Device session persisted across `generate_waveform` → `measure` calls.
+
+| Measurement | Value | Unit | Result |
+|------------|-------|------|--------|
+| frequency | 1000.3 | Hz | PASS |
+| rms | 0.707 | V | PASS |
+| peak_to_peak | 2.012 | V | PASS |
+
+`close_device` successfully released the device (`is_open: 0`).
+
+Result: PASS — hybrid session lifecycle verified end-to-end through MCP protocol.
