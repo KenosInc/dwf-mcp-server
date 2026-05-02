@@ -16,28 +16,83 @@ def analog_capture(
     sample_rate: float = 1_000_000.0,
     duration: float = 0.001,
     voltage_range: float = 5.0,
+    buffer_size: int | None = None,
+    action: Literal["single", "start", "read", "stop"] = "single",
     device_index: int = 0,
 ) -> dict:
     """Capture analog waveform samples from an oscilloscope channel.
 
+    The `action` parameter selects the capture lifecycle:
+
+    - `"single"` (default): one-shot blocking capture for `duration` seconds, then
+      returns the samples. Use for quick measurements.
+    - `"start"`: begin a continuous SCAN_SHIFT capture into a circular buffer
+      (`buffer_size` samples, default 8192) that persists across tool calls.
+    - `"read"`: fetch the latest samples from a running continuous capture. Can be
+      called repeatedly.
+    - `"stop"`: stop the continuous capture.
+
+    Use the start/read/stop sequence when you need to observe the scope while
+    another instrument (AWG, LA) is running concurrently.
+
     Args:
         channel: Oscilloscope channel number (1 or 2, default: 1).
-        sample_rate: Sampling rate in Hz (default: 1 MHz).
-        duration: Capture duration in seconds (default: 1 ms → 1000 samples at 1 MHz).
+        sample_rate: Sampling rate in Hz (default: 1 MHz). Used by `single`/`start`.
+        duration: Single-shot capture duration in seconds (default: 1 ms).
+            Determines buffer size for `single` if `buffer_size` is unset.
         voltage_range: Input voltage range in Volts peak-to-peak (default: 5 V).
+        buffer_size: Circular buffer size for continuous capture (default: 8192).
+            Also overrides `duration`-derived buffer for `single`.
+        action: Capture lifecycle action (default: "single").
         device_index: Device index (default: 0, the first device).
 
     Returns:
-        Dictionary with 'samples' (list of floats in Volts) and metadata.
+        For `single`/`read`: dict with `samples` (V floats) and metadata.
+        For `start`/`stop`: dict with `status` and configuration metadata.
     """
     try:
-        buffer_size = int(sample_rate * duration)
-        ch_idx = channel - 1  # dwfpy uses 0-based channel indexing
-
+        ch_idx = channel - 1
         device = get_manager().acquire(device_index)
         scope = device.analog_input
+
+        if action == "stop":
+            scope.configure(start=False)
+            return {"action": "stop", "status": "stopped"}
+
+        if action == "read":
+            scope.read_status(read_data=True)
+            samples: list[float] = scope[ch_idx].get_data().tolist()
+            return {
+                "channel": channel,
+                "action": "read",
+                "sample_count": len(samples),
+                "unit": "V",
+                "samples": samples,
+            }
+
+        if action == "start":
+            buf = buffer_size if buffer_size is not None else 8192
+            scope[ch_idx].setup(range=voltage_range, enabled=True)
+            scope.setup_acquisition(
+                mode=dwf.AcquisitionMode.SCAN_SHIFT,
+                sample_rate=sample_rate,
+                buffer_size=buf,
+                configure=True,
+                start=True,
+            )
+            return {
+                "channel": channel,
+                "action": "start",
+                "status": "running",
+                "sample_rate": sample_rate,
+                "buffer_size": buf,
+                "voltage_range": voltage_range,
+            }
+
+        # action == "single"
+        buf = buffer_size if buffer_size is not None else int(sample_rate * duration)
         scope[ch_idx].setup(range=voltage_range, enabled=True)
-        scope.setup_acquisition(sample_rate=sample_rate, buffer_size=buffer_size, start=True)
+        scope.setup_acquisition(sample_rate=sample_rate, buffer_size=buf, start=True)
 
         timeout = max(duration * 10, 5.0)
         deadline = time.monotonic() + timeout
@@ -46,7 +101,7 @@ def analog_capture(
                 return {"error": "Capture timed out."}
             time.sleep(0.001)
 
-        samples: list[float] = scope[ch_idx].get_data().tolist()
+        samples = scope[ch_idx].get_data().tolist()
 
         return {
             "channel": channel,
@@ -68,25 +123,44 @@ def generate_waveform(
     amplitude: float = 1.0,
     offset: float = 0.0,
     duration: float = 0.0,
+    action: Literal["pulse", "start", "stop"] = "pulse",
     device_index: int = 0,
 ) -> dict:
     """Generate an analog waveform using the built-in function generator (AWG).
 
+    The `action` parameter selects the output lifecycle:
+
+    - `"pulse"` (default): emit the waveform for `duration` seconds and stop. If
+      `duration == 0`, output runs continuously (legacy continuous mode).
+    - `"start"`: begin continuous output that persists across tool calls. The AWG
+      keeps running until `action="stop"` is called or the device session closes.
+    - `"stop"`: stop the AWG output without resetting its configuration. Other
+      waveform parameters are ignored when stopping.
+
+    Use start/stop when another instrument (LA, scope) needs to observe the AWG
+    output across multiple tool invocations (e.g. W1↔DIO loopback verification).
+
     Args:
         channel: AWG channel number (1 or 2, default: 1).
-        waveform: Waveform type: sine, square, triangle, dc, noise, ramp-up, ramp-down
-            (default: "sine").
+        waveform: Waveform type: sine, square, triangle, dc, noise, ramp-up,
+            ramp-down (default: "sine"). Ignored when action="stop".
         frequency: Signal frequency in Hz (default: 1000 Hz).
         amplitude: Signal amplitude in Volts peak (default: 1 V).
         offset: DC offset in Volts (default: 0 V).
         duration: Generation duration in seconds; 0 = continuous (default: 0).
+            Only used by action="pulse".
+        action: Output lifecycle action (default: "pulse").
         device_index: Device index (default: 0, the first device).
     """
     try:
         ch_idx = channel - 1
-
         device = get_manager().acquire(device_index)
         ch = device.analog_output[ch_idx]
+
+        if action == "stop":
+            ch.configure(start=False)
+            return {"channel": channel, "action": "stop", "status": "stopped"}
+
         ch.setup(
             waveform,
             frequency=frequency,
@@ -94,6 +168,19 @@ def generate_waveform(
             offset=offset,
             start=True,
         )
+
+        if action == "start":
+            return {
+                "channel": channel,
+                "action": "start",
+                "status": "running",
+                "waveform": waveform,
+                "frequency": frequency,
+                "amplitude": amplitude,
+                "offset": offset,
+            }
+
+        # action == "pulse"
         if duration > 0:
             time.sleep(duration)
             ch.reset()
@@ -119,6 +206,9 @@ def measure(
     device_index: int = 0,
 ) -> dict:
     """Measure an electrical quantity using the oscilloscope.
+
+    Single-shot measurement; for continuous observation use
+    `analog_capture(action="start"/"read"/"stop")` instead.
 
     Args:
         channel: Oscilloscope channel number (1 or 2, default: 1).
