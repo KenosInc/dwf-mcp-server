@@ -2,7 +2,6 @@ FROM mcr.microsoft.com/devcontainers/python:3.12-bookworm
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         usbutils \
-        yamllint \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Digilent Adept 2 Runtime (provides libdmgr, libdpcomm, libdftd2xx, etc.)
@@ -37,7 +36,13 @@ RUN usermod -aG root vscode
 # Install uv (fast Python package manager)
 RUN pip install --no-cache-dir uv
 
-# Smoke tests: fail the build early if any tool is missing
+# Make mise-installed tools available to all shells. mise itself is installed
+# in post-create.sh; the shims directory is harmless to add to PATH before
+# the tools land — entries in a missing directory are simply ignored.
+ENV PATH="/home/vscode/.local/share/mise/shims:/home/vscode/.local/bin:${PATH}"
+
+# Smoke tests: fail the build early if any image-level tool is missing.
+# yamllint and the rest of the lint toolchain (rumdl, taplo, shellcheck)
+# are installed at post-create time via mise, not here.
 RUN python3 --version \
-    && uv --version \
-    && yamllint --version
+    && uv --version

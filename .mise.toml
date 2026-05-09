@@ -1,0 +1,6 @@
+[tools]
+"npm:@openai/codex" = "0.130.0"
+"github:rvben/rumdl" = "0.1.91"
+taplo = "0.10.0"
+"pipx:yamllint" = "1.35.1"
+shellcheck = "0.11.0"
