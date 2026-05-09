@@ -91,9 +91,10 @@ def digital_capture(
 
         # action == "single"
         buf = buffer_size if buffer_size is not None else int(sample_rate * duration)
+        actual_duration = buf / sample_rate
         la.setup_acquisition(sample_rate=sample_rate, buffer_size=buf, start=True)
 
-        timeout = max(duration * 10, 5.0)
+        timeout = max(actual_duration * 10, 5.0)
         deadline = time.monotonic() + timeout
         while la.read_status(read_data=True) != dwf.Status.DONE:
             if time.monotonic() > deadline:
@@ -112,7 +113,7 @@ def digital_capture(
         return {
             "channels": channels,
             "sample_rate": sample_rate,
-            "duration": duration,
+            "duration": actual_duration,
             "sample_count": len(filtered),
             "samples": filtered,
         }

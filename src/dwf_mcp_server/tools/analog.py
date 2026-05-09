@@ -10,9 +10,16 @@ from fastmcp import FastMCP
 
 from dwf_mcp_server.session import get_manager
 
+# Tracks the channel last used by analog_capture(action="start") and
+# generate_waveform(action="start"), keyed by device_index. Used to fill in
+# the channel for follow-up read/stop calls when the caller omits it. Updated
+# on start; reads on read/stop only when channel is None.
+_active_scope_channel: dict[int, int] = {}
+_active_awg_channel: dict[int, int] = {}
+
 
 def analog_capture(
-    channel: int = 1,
+    channel: int | None = None,
     sample_rate: float = 1_000_000.0,
     duration: float = 0.001,
     voltage_range: float = 5.0,
@@ -29,14 +36,18 @@ def analog_capture(
     - `"start"`: begin a continuous SCAN_SHIFT capture into a circular buffer
       (`buffer_size` samples, default 8192) that persists across tool calls.
     - `"read"`: fetch the latest samples from a running continuous capture. Can be
-      called repeatedly.
+      called repeatedly. If `channel` is omitted, the channel from the matching
+      `start` call on this device is reused.
     - `"stop"`: stop the continuous capture.
 
     Use the start/read/stop sequence when you need to observe the scope while
     another instrument (AWG, LA) is running concurrently.
 
     Args:
-        channel: Oscilloscope channel number (1 or 2, default: 1).
+        channel: Oscilloscope channel number (1 or 2). Defaults to 1 for
+            `single`/`start`. For `read`, defaults to whichever channel the
+            preceding `start` used; an error is returned if no `start` is on
+            record and no channel is supplied.
         sample_rate: Sampling rate in Hz (default: 1 MHz). Used by `single`/`start`.
         duration: Single-shot capture duration in seconds (default: 1 ms).
             Determines buffer size for `single` if `buffer_size` is unset.
@@ -51,7 +62,6 @@ def analog_capture(
         For `start`/`stop`: dict with `status` and configuration metadata.
     """
     try:
-        ch_idx = channel - 1
         device = get_manager().acquire(device_index)
         scope = device.analog_input
 
@@ -60,15 +70,27 @@ def analog_capture(
             return {"action": "stop", "status": "stopped"}
 
         if action == "read":
+            ch = channel if channel is not None else _active_scope_channel.get(device_index)
+            if ch is None:
+                return {
+                    "error": (
+                        "No active scope capture on this device; "
+                        "call analog_capture(action='start') first or pass channel."
+                    )
+                }
+            ch_idx = ch - 1
             scope.read_status(read_data=True)
             samples: list[float] = scope[ch_idx].get_data().tolist()
             return {
-                "channel": channel,
+                "channel": ch,
                 "action": "read",
                 "sample_count": len(samples),
                 "unit": "V",
                 "samples": samples,
             }
+
+        ch = channel if channel is not None else 1
+        ch_idx = ch - 1
 
         if action == "start":
             buf = buffer_size if buffer_size is not None else 8192
@@ -80,8 +102,9 @@ def analog_capture(
                 configure=True,
                 start=True,
             )
+            _active_scope_channel[device_index] = ch
             return {
-                "channel": channel,
+                "channel": ch,
                 "action": "start",
                 "status": "running",
                 "sample_rate": sample_rate,
@@ -91,10 +114,11 @@ def analog_capture(
 
         # action == "single"
         buf = buffer_size if buffer_size is not None else int(sample_rate * duration)
+        actual_duration = buf / sample_rate
         scope[ch_idx].setup(range=voltage_range, enabled=True)
         scope.setup_acquisition(sample_rate=sample_rate, buffer_size=buf, start=True)
 
-        timeout = max(duration * 10, 5.0)
+        timeout = max(actual_duration * 10, 5.0)
         deadline = time.monotonic() + timeout
         while scope.read_status(read_data=True) != dwf.Status.DONE:
             if time.monotonic() > deadline:
@@ -104,9 +128,9 @@ def analog_capture(
         samples = scope[ch_idx].get_data().tolist()
 
         return {
-            "channel": channel,
+            "channel": ch,
             "sample_rate": sample_rate,
-            "duration": duration,
+            "duration": actual_duration,
             "sample_count": len(samples),
             "unit": "V",
             "samples": samples,
@@ -117,7 +141,7 @@ def analog_capture(
 
 
 def generate_waveform(
-    channel: int = 1,
+    channel: int | None = None,
     waveform: Literal["sine", "square", "triangle", "dc", "noise", "ramp-up", "ramp-down"] = "sine",
     frequency: float = 1000.0,
     amplitude: float = 1.0,
@@ -134,14 +158,18 @@ def generate_waveform(
       `duration == 0`, output runs continuously (legacy continuous mode).
     - `"start"`: begin continuous output that persists across tool calls. The AWG
       keeps running until `action="stop"` is called or the device session closes.
-    - `"stop"`: stop the AWG output without resetting its configuration. Other
-      waveform parameters are ignored when stopping.
+    - `"stop"`: stop the AWG output without resetting its configuration. If
+      `channel` is omitted, the channel from the matching `start` call is reused.
+      Other waveform parameters are ignored when stopping.
 
     Use start/stop when another instrument (LA, scope) needs to observe the AWG
     output across multiple tool invocations (e.g. W1↔DIO loopback verification).
 
     Args:
-        channel: AWG channel number (1 or 2, default: 1).
+        channel: AWG channel number (1 or 2). Defaults to 1 for
+            `pulse`/`start`. For `stop`, defaults to the channel of the most
+            recent `start` on this device; an error is returned if no `start`
+            is on record and no channel is supplied.
         waveform: Waveform type: sine, square, triangle, dc, noise, ramp-up,
             ramp-down (default: "sine"). Ignored when action="stop".
         frequency: Signal frequency in Hz (default: 1000 Hz).
@@ -153,14 +181,22 @@ def generate_waveform(
         device_index: Device index (default: 0, the first device).
     """
     try:
-        ch_idx = channel - 1
         device = get_manager().acquire(device_index)
-        ch = device.analog_output[ch_idx]
 
         if action == "stop":
-            ch.configure(start=False)
-            return {"channel": channel, "action": "stop", "status": "stopped"}
+            ch_num = channel if channel is not None else _active_awg_channel.get(device_index)
+            if ch_num is None:
+                return {
+                    "error": (
+                        "No active AWG output on this device; "
+                        "call generate_waveform(action='start') first or pass channel."
+                    )
+                }
+            device.analog_output[ch_num - 1].configure(start=False)
+            return {"channel": ch_num, "action": "stop", "status": "stopped"}
 
+        ch_num = channel if channel is not None else 1
+        ch = device.analog_output[ch_num - 1]
         ch.setup(
             waveform,
             frequency=frequency,
@@ -170,8 +206,9 @@ def generate_waveform(
         )
 
         if action == "start":
+            _active_awg_channel[device_index] = ch_num
             return {
-                "channel": channel,
+                "channel": ch_num,
                 "action": "start",
                 "status": "running",
                 "waveform": waveform,
@@ -186,7 +223,7 @@ def generate_waveform(
             ch.reset()
 
         return {
-            "channel": channel,
+            "channel": ch_num,
             "waveform": waveform,
             "frequency": frequency,
             "amplitude": amplitude,

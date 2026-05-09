@@ -85,8 +85,9 @@ def device_state(device_index: int = 0) -> dict:
     """Return the current operational state of every sub-instrument on the device.
 
     Use this to confirm whether AWG outputs, scope captures, or LA captures started
-    via start_waveform / start_scope_capture / start_logic_capture are still
-    running across multiple tool invocations.
+    via generate_waveform(action="start"), analog_capture(action="start"), or
+    digital_capture(action="start") are still running across multiple tool
+    invocations.
 
     If the session is closed, returns only `session_open: false` without re-opening
     the device.
@@ -98,24 +99,23 @@ def device_state(device_index: int = 0) -> dict:
         Dictionary with per-sub-instrument status. Each `status` value is one of
         `ready`, `armed`, `done`, `running`, `config`, `prefill`, `wait`.
     """
-    manager = get_manager()
-    if not manager.is_open(device_index):
-        return {"device_index": device_index, "session_open": False}
-
     try:
-        device = manager.acquire(device_index)
-    except Exception as exc:  # noqa: BLE001
-        manager.release(device_index)
-        return {"device_index": device_index, "error": str(exc)}
+        manager = get_manager()
+        if not manager.is_open(device_index):
+            return {"device_index": device_index, "session_open": False}
 
-    return {
-        "device_index": device_index,
-        "session_open": True,
-        "awg": _awg_state(device),
-        "scope": _scope_state(device),
-        "logic_analyzer": _la_state(device),
-        "power_supply": _power_state(device),
-    }
+        device = manager.acquire(device_index)
+        return {
+            "device_index": device_index,
+            "session_open": True,
+            "awg": _awg_state(device),
+            "scope": _scope_state(device),
+            "logic_analyzer": _la_state(device),
+            "power_supply": _power_state(device),
+        }
+    except Exception as exc:  # noqa: BLE001
+        get_manager().release(device_index)
+        return {"device_index": device_index, "error": str(exc)}
 
 
 def register(mcp: FastMCP) -> None:

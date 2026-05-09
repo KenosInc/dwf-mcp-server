@@ -42,6 +42,13 @@ def _make_manager_mock(device_mock: MagicMock | None = None) -> MagicMock:
     return manager
 
 
+@pytest.fixture(autouse=True)
+def _reset_active_channel_state() -> None:
+    """Clear analog_capture/generate_waveform channel persistence between tests."""
+    analog_mod._active_scope_channel.clear()
+    analog_mod._active_awg_channel.clear()
+
+
 # ---------------------------------------------------------------------------
 # devices.list_devices
 # ---------------------------------------------------------------------------
@@ -888,6 +895,24 @@ class TestAnalogCapture:
         assert "error" in result
         assert "No device found" in result["error"]
 
+    def test_buffer_size_overrides_duration_in_metadata(self) -> None:
+        """When buffer_size is supplied, returned duration reflects buf/sample_rate."""
+        manager_mock, dwf_mock, _ = self._make_mocks()
+
+        with (
+            patch("dwf_mcp_server.tools.analog.dwf", dwf_mock),
+            patch("dwf_mcp_server.tools.analog.get_manager", return_value=manager_mock),
+        ):
+            result = analog_capture(
+                sample_rate=1_000_000.0,
+                duration=0.001,
+                buffer_size=10_000,
+            )
+
+        # buffer_size 10_000 at 1 MHz sample_rate ⇒ 10 ms actual capture window,
+        # not the 1 ms originally implied by duration.
+        assert result["duration"] == 0.01
+
 
 # ---------------------------------------------------------------------------
 # analog.generate_waveform
@@ -1171,6 +1196,22 @@ class TestDigitalCapture:
         assert "error" in result
         assert "No device found" in result["error"]
 
+    def test_buffer_size_overrides_duration_in_metadata(self) -> None:
+        """When buffer_size is supplied, returned duration reflects buf/sample_rate."""
+        manager_mock, dwf_mock, _ = self._make_mocks()
+
+        with (
+            patch("dwf_mcp_server.tools.digital.dwf", dwf_mock),
+            patch("dwf_mcp_server.tools.digital.get_manager", return_value=manager_mock),
+        ):
+            result = digital_capture(
+                sample_rate=1_000_000.0,
+                duration=0.001,
+                buffer_size=10_000,
+            )
+
+        assert result["duration"] == 0.01
+
 
 # ---------------------------------------------------------------------------
 # diagnostics.check_environment
@@ -1424,6 +1465,28 @@ class TestGenerateWaveformLifecycle:
         assert "error" in result
         manager_mock.release.assert_called_once_with(0)
 
+    def test_action_stop_uses_persisted_channel_when_omitted(self) -> None:
+        """After start with channel=2, stop without channel stops CH2."""
+        manager_mock, device_mock, _ = self._make_mocks()
+
+        with patch("dwf_mcp_server.tools.analog.get_manager", return_value=manager_mock):
+            generate_waveform(channel=2, action="start")
+            result = generate_waveform(action="stop")
+
+        assert result["action"] == "stop"
+        assert result["channel"] == 2
+        device_mock.analog_output.__getitem__.assert_any_call(1)
+
+    def test_action_stop_without_prior_start_returns_error(self) -> None:
+        """Stop without explicit channel and no persisted start returns an error."""
+        manager_mock, _, _ = self._make_mocks()
+
+        with patch("dwf_mcp_server.tools.analog.get_manager", return_value=manager_mock):
+            result = generate_waveform(action="stop")
+
+        assert "error" in result
+        assert "channel" in result["error"].lower()
+
 
 # ---------------------------------------------------------------------------
 # analog.analog_capture — action lifecycle (start/read/stop)
@@ -1526,6 +1589,32 @@ class TestAnalogCaptureLifecycle:
 
         assert "error" in result
         manager_mock.release.assert_called_once_with(0)
+
+    def test_action_read_uses_persisted_channel_when_omitted(self) -> None:
+        """After start with channel=2, read without channel reads from CH2."""
+        samples = [0.1, 0.2, 0.3]
+        manager_mock, dwf_mock, _ = self._make_mocks(samples=samples)
+
+        with (
+            patch("dwf_mcp_server.tools.analog.dwf", dwf_mock),
+            patch("dwf_mcp_server.tools.analog.get_manager", return_value=manager_mock),
+        ):
+            analog_capture(channel=2, action="start")
+            result = analog_capture(action="read")
+
+        assert result["action"] == "read"
+        assert result["channel"] == 2
+        assert result["samples"] == samples
+
+    def test_action_read_without_prior_start_returns_error(self) -> None:
+        """Read without explicit channel and no persisted start returns an error."""
+        manager_mock, _, _ = self._make_mocks()
+
+        with patch("dwf_mcp_server.tools.analog.get_manager", return_value=manager_mock):
+            result = analog_capture(action="read")
+
+        assert "error" in result
+        assert "channel" in result["error"].lower() or "no active" in result["error"].lower()
 
 
 # ---------------------------------------------------------------------------
@@ -1720,4 +1809,17 @@ class TestDeviceState:
         assert result["device_index"] == 0
         assert "error" in result
         assert "USB lost" in result["error"]
+        manager_mock.release.assert_called_once_with(0)
+
+    def test_is_open_failure_returned_as_error(self) -> None:
+        """Outer try/except catches exceptions raised by manager.is_open()."""
+        manager_mock = MagicMock()
+        manager_mock.is_open.side_effect = RuntimeError("is_open boom")
+
+        with patch("dwf_mcp_server.tools.session_tools.get_manager", return_value=manager_mock):
+            result = device_state(device_index=0)
+
+        assert result["device_index"] == 0
+        assert "error" in result
+        assert "is_open boom" in result["error"]
         manager_mock.release.assert_called_once_with(0)
