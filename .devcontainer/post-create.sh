@@ -33,7 +33,10 @@ echo "--- Installing mise and pinned tools ---"
 # mise reads .mise.toml at the repo root and installs every tool listed there
 # (codex, etc.). Re-running is safe and fast when the versions already match.
 if ! command -v mise >/dev/null 2>&1 && [ ! -x "$HOME/.local/bin/mise" ]; then
-  curl -fsSL https://mise.run | sh
+  curl -fsSL \
+    --retry 5 --retry-delay 2 --retry-connrefused \
+    --connect-timeout 10 --max-time 60 \
+    https://mise.run | sh
 fi
 export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"
 mise trust
