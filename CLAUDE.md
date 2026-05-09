@@ -131,3 +131,10 @@ Docker image includes only their system-level dependencies (e.g. `libusb-1.0-0`)
 2. Commit, tag `vX.Y.Z`, push with `--tags`.
 3. GitHub Actions builds multi-arch image to `ghcr.io/kenosinc/dwf-mcp-server:X.Y.Z` and
    publishes `server.json` to the MCP Registry.
+4. Publish the GitHub Release page with auto-generated notes:
+   ```bash
+   gh release create vX.Y.Z --generate-notes
+   ```
+   Notes are categorized by the labels defined in `.github/release.yml` (PR labels
+   are applied automatically by the `PR Labeler` workflow based on branch prefix
+   and changed paths — see `.github/labeler.yml`).
