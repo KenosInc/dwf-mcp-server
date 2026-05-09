@@ -14,7 +14,11 @@ COPY src/ src/
 
 # `--frozen` aborts if uv.lock is out of date relative to pyproject.toml.
 # `--no-dev` excludes dev / test dependencies from the runtime image.
-RUN uv sync --frozen --no-dev
+# `--no-editable` installs the project as a built wheel rather than an
+# editable install pointing at /app/src — without it, the runtime stage
+# (which only copies /app/.venv) would import-fail because the .pth file
+# would reference a missing /app/src directory.
+RUN uv sync --frozen --no-dev --no-editable
 
 # Stage 2: runtime — minimal image without build tools
 FROM python:3.14-slim
