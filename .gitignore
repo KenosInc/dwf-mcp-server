@@ -36,3 +36,6 @@ htmlcov/
 Dockerfile.local
 captures/
 references/
+
+# Local-only MCP client config — copy `.mcp.example.json` and adjust per machine.
+.mcp.json

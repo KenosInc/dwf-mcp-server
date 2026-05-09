@@ -94,6 +94,19 @@ Add to `claude_desktop_config.json`:
 
 Pass `--privileged` so the container can access USB devices.
 
+#### Project-level config (Claude Code)
+
+If you have cloned this repository, copy the bundled example to a project-local
+`.mcp.json` (which is gitignored) so Claude Code picks it up automatically when
+opened against this directory:
+
+```bash
+cp .mcp.example.json .mcp.json
+```
+
+Edit the resulting `.mcp.json` to match your local image tag or to add other
+servers; the original `.mcp.example.json` stays clean and shareable.
+
 ## Available MCP Tools
 
 | Tool | Description |

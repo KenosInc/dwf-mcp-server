@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "dwf": {
+      "command": "docker",
+      "args": [
+        "run", "-i", "--rm",
+        "--privileged",
+        "-v", "/dev/bus/usb:/dev/bus/usb",
+        "dwf-mcp-server",
+        "dwf-mcp-server"
+      ]
+    }
+  }
+}
