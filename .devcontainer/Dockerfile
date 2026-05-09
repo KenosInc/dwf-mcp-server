@@ -37,6 +37,11 @@ RUN usermod -aG root vscode
 # Install uv (fast Python package manager)
 RUN pip install --no-cache-dir uv
 
+# Make mise-installed tools available to all shells. mise itself is installed
+# in post-create.sh; the shims directory is harmless to add to PATH before
+# the tools land — entries in a missing directory are simply ignored.
+ENV PATH="/home/vscode/.local/share/mise/shims:/home/vscode/.local/bin:${PATH}"
+
 # Smoke tests: fail the build early if any tool is missing
 RUN python3 --version \
     && uv --version \
