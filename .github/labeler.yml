@@ -24,16 +24,23 @@
 
 # Type labels (by branch name)
 'Type: Feature':
-  - head-branch: ['^feat/']
+  - head-branch:
+      - '^feat/'
 
 'Type: Bug':
-  - head-branch: ['^fix/']
+  - head-branch:
+      - '^fix/'
 
 'Type: Enhancement':
-  - head-branch: ['^perf/']
+  - head-branch:
+      - '^perf/'
 
 'Type: House Keeping':
-  - head-branch: ['^chore/', '^ci/', '^refactor/']
+  - head-branch:
+      - '^chore/'
+      - '^ci/'
+      - '^refactor/'
 
 'Type: Documentation':
-  - head-branch: ['^docs/']
+  - head-branch:
+      - '^docs/'
