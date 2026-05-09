@@ -20,6 +20,7 @@
     "source=venv,target=/home/vscode/.venv,type=volume"
   ],
   "features": {
+    "ghcr.io/devcontainers/features/docker-outside-of-docker:1.9.1": {},
     "ghcr.io/devcontainers/features/github-cli:1": {},
     "ghcr.io/devcontainers/features/node:1": {
       "version": "lts"

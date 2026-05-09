@@ -30,8 +30,11 @@ echo "--- Installing global npm tools ---"
 npm install -g markdownlint-cli2
 
 echo "--- Creating Python venv and installing dependencies ---"
-# Create venv and install Python package in editable mode with dev extras
-uv venv ~/.venv
+# Create venv and install Python package in editable mode with dev extras.
+# `--allow-existing` keeps the venv intact when the `venv` Docker volume
+# survives a devcontainer rebuild — without it, `uv venv` prompts the user
+# and the post-create step hangs.
+uv venv --allow-existing ~/.venv
 # shellcheck disable=SC1091
 source ~/.venv/bin/activate
 uv pip install -e "/workspaces/dwf-mcp-server[dev]"
