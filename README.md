@@ -113,14 +113,17 @@ servers; the original `.mcp.example.json` stays clean and shareable.
 |---|---|
 | `list_devices` | List all connected Digilent WaveForms devices |
 | `device_info` | Get detailed information about a specific device |
-| `analog_capture` | Capture analog waveform samples (oscilloscope) |
-| `generate_waveform` | Generate an analog signal (AWG): sine, square, triangle, ... |
+| `analog_capture` | Capture analog waveform samples (oscilloscope); supports `action="single" / "start" / "read" / "stop"` for continuous capture across tool calls |
+| `generate_waveform` | Generate an analog signal (AWG): sine, square, triangle, ...; supports `action="pulse" / "start" / "stop"` for persistent output |
 | `measure` | Measure DC voltage, RMS, frequency, period, or peak-to-peak |
 | `power_supply` | Control the programmable power supply (V+ / V-) |
-| `digital_capture` | Capture digital logic signals (logic analyzer) |
+| `digital_capture` | Capture digital logic signals (logic analyzer); supports `action="single" / "start" / "read" / "stop"` for continuous capture across tool calls |
 | `gpio_read` | Read the logic level of a digital I/O pin |
 | `gpio_write` | Set the logic level of a digital I/O pin |
 | `spi_transfer` | Send and receive data over SPI using the digital protocol interface |
+| `device_state` | Report per-sub-instrument running/idle status (AWG, scope, LA, power supply) |
+| `close_device` | Close the persistent device session and stop all outputs |
+| `device_session_status` | Check whether the persistent device session is currently open |
 
 ## Development
 
