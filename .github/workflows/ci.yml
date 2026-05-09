@@ -45,11 +45,13 @@ jobs:
       - name: Install uv
         run: pip install --no-cache-dir uv
 
-      - name: Install package with dev extras
-        run: uv pip install --system -e ".[dev]"
+      # `--frozen` fails fast if uv.lock has drifted from pyproject.toml,
+      # which is the primary signal we want this job to surface.
+      - name: Sync dependencies from lockfile
+        run: uv sync --frozen --extra dev
 
       - name: Run tests
-        run: pytest tests/ -v --tb=short
+        run: uv run pytest tests/ -v --tb=short
 
   devcontainer:
     name: Devcontainer CI

@@ -1,17 +1,20 @@
-# Stage 1: builder — installs the package and dependencies
+# Stage 1: builder — installs the package and dependencies from uv.lock
 FROM python:3.14-slim AS builder
 
-WORKDIR /build
+WORKDIR /app
 
 RUN pip install --no-cache-dir uv
 
-COPY pyproject.toml README.md ./
+# uv defaults to symlinks; copy is required when the .venv is later moved
+# across stages (the symlink targets disappear in the runtime image).
+ENV UV_LINK_MODE=copy
+
+COPY pyproject.toml uv.lock README.md ./
 COPY src/ src/
 
-# Install into the system Python and stage site-packages at a version-agnostic path
-RUN uv pip install --system --no-cache . \
- && PY_SITE=$(python3 -c 'import sysconfig; print(sysconfig.get_path("purelib"))') \
- && cp -a "$PY_SITE" /opt/site-packages
+# `--frozen` aborts if uv.lock is out of date relative to pyproject.toml.
+# `--no-dev` excludes dev / test dependencies from the runtime image.
+RUN uv sync --frozen --no-dev
 
 # Stage 2: runtime — minimal image without build tools
 FROM python:3.14-slim
@@ -24,14 +27,10 @@ RUN apt-get update \
        libusb-1.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy installed packages and entry-point script from builder.
-# Site-packages go through a staging path so the COPY is version-agnostic;
-# a RUN step then moves them to the correct Python-version directory.
-COPY --from=builder /opt/site-packages /opt/site-packages
-COPY --from=builder /usr/local/bin/dwf-mcp-server /usr/local/bin/dwf-mcp-server
-RUN PY_SITE=$(python3 -c 'import sysconfig; print(sysconfig.get_path("purelib"))') \
- && cp -a /opt/site-packages/* "$PY_SITE"/ \
- && rm -rf /opt/site-packages
+# Copy the pinned virtual environment from the builder stage. `dwf-mcp-server`
+# resolves to /app/.venv/bin/dwf-mcp-server via PATH.
+COPY --from=builder /app/.venv /app/.venv
+ENV PATH="/app/.venv/bin:$PATH"
 
 # Digilent Adept 2 Runtime and WaveForms SDK (libdwf.so) are proprietary
 # and NOT included in this image.
