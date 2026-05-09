@@ -26,9 +26,6 @@ else
   echo "~/.claude.json already exists, skipping"
 fi
 
-echo "--- Installing global npm tools ---"
-npm install -g markdownlint-cli2
-
 echo "--- Installing mise and pinned tools ---"
 # mise reads .mise.toml at the repo root and installs every tool listed there
 # (codex, etc.). Re-running is safe and fast when the versions already match.
@@ -63,8 +60,10 @@ ruff --version
 yamllint --version
 gh --version
 node --version
-markdownlint-cli2 --version
 codex --version
+rumdl --version
+taplo --version
+shellcheck --version
 python3 -c "import dwf_mcp_server.server" 2>/dev/null && echo "dwf-mcp-server: ok" || echo "dwf-mcp-server: import failed (check libdwf installation)"
 
 # Check uv cache volume permissions

@@ -1,0 +1,14 @@
+{
+  "config": {
+    "MD013": {
+      "line_length": 120
+    }
+  },
+  "ignores": [
+    ".venv/**",
+    "node_modules/**",
+    ".claude/**",
+    ".serena/**",
+    "references/**"
+  ]
+}
