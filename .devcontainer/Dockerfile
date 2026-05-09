@@ -41,7 +41,8 @@ RUN pip install --no-cache-dir uv
 # the tools land — entries in a missing directory are simply ignored.
 ENV PATH="/home/vscode/.local/share/mise/shims:/home/vscode/.local/bin:${PATH}"
 
-# Smoke tests: fail the build early if any tool is missing
+# Smoke tests: fail the build early if any image-level tool is missing.
+# yamllint and the rest of the lint toolchain (rumdl, taplo, shellcheck)
+# are installed at post-create time via mise, not here.
 RUN python3 --version \
-    && uv --version \
-    && yamllint --version
+    && uv --version
