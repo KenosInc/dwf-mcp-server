@@ -4,8 +4,7 @@
       "command": "docker",
       "args": [
         "run", "-i", "--rm",
-        "--privileged",
-        "-v", "/dev/bus/usb:/dev/bus/usb",
+        "--device=/dev/bus/usb",
         "dwf-mcp-server",
         "dwf-mcp-server"
       ]
