@@ -67,7 +67,11 @@ def analog_capture(
 
         if action == "stop":
             scope.configure(start=False)
-            return {"action": "stop", "status": "stopped"}
+            ch = _active_scope_channel.pop(device_index, None)
+            response: dict = {"action": "stop", "status": "stopped"}
+            if ch is not None:
+                response["channel"] = ch
+            return response
 
         if action == "read":
             ch = channel if channel is not None else _active_scope_channel.get(device_index)
@@ -193,6 +197,10 @@ def generate_waveform(
                     )
                 }
             device.analog_output[ch_num - 1].configure(start=False)
+            # Only clear persistence if we stopped the persisted channel — preserves
+            # the active channel record when the caller explicitly stops a different one.
+            if _active_awg_channel.get(device_index) == ch_num:
+                del _active_awg_channel[device_index]
             return {"channel": ch_num, "action": "stop", "status": "stopped"}
 
         ch_num = channel if channel is not None else 1

@@ -8,6 +8,11 @@ from fastmcp import FastMCP
 
 from dwf_mcp_server.session import get_manager
 
+# Tracks the channel subset most recently requested by digital_capture(action="start"),
+# keyed by device_index. None / missing entries mean "all 16 channels". Used to fill
+# in `channels` for a follow-up `read` call when the caller omits it; cleared on stop.
+_active_la_channels: dict[int, list[int]] = {}
+
 
 def digital_capture(
     channels: list[int] | None = None,
@@ -25,7 +30,8 @@ def digital_capture(
     - `"start"`: begin a continuous SCAN_SHIFT capture into a circular buffer
       (`buffer_size` samples, default 8192) that persists across tool calls.
     - `"read"`: fetch the latest samples from a running continuous capture. Can be
-      called repeatedly.
+      called repeatedly. If `channels` is omitted, the channel subset from the
+      matching `start` call on this device is reused.
     - `"stop"`: stop the continuous capture.
 
     Use start/read/stop when observing the LA while another instrument (AWG, scope)
@@ -35,7 +41,9 @@ def digital_capture(
 
     Args:
         channels: Channel indices to include in the result (0-based, DIO0-DIO15).
-            None = all 16 channels.
+            None = all 16 channels for `single`/`start`. For `read`, None falls
+            back to the channel subset from the preceding `start` (or all 16 if
+            no `start` has happened on this device).
         sample_rate: Sampling rate in Hz (default: 1 MHz). Used by `single`/`start`.
         duration: Single-shot capture duration in seconds (default: 1 ms).
             Determines buffer size for `single` if `buffer_size` is unset.
@@ -53,20 +61,20 @@ def digital_capture(
 
         if action == "stop":
             la.configure(start=False)
+            _active_la_channels.pop(device_index, None)
             return {"action": "stop", "status": "stopped"}
 
         if action == "read":
             la.read_status(read_data=True)
             raw: list[int] = la.get_data().tolist()
             if channels is not None:
-                mask = sum(1 << ch for ch in channels)
-                samples = [s & mask for s in raw]
-                channels_out = channels
+                effective = channels
             else:
-                samples = raw
-                channels_out = list(range(16))
+                effective = _active_la_channels.get(device_index, list(range(16)))
+            mask = sum(1 << ch for ch in effective)
+            samples = [s & mask for s in raw]
             return {
-                "channels": channels_out,
+                "channels": effective,
                 "action": "read",
                 "sample_count": len(samples),
                 "samples": samples,
@@ -81,10 +89,12 @@ def digital_capture(
                 configure=True,
                 start=True,
             )
+            persisted = list(channels) if channels is not None else list(range(16))
+            _active_la_channels[device_index] = persisted
             return {
                 "action": "start",
                 "status": "running",
-                "channels": channels if channels is not None else list(range(16)),
+                "channels": persisted,
                 "sample_rate": sample_rate,
                 "buffer_size": buf,
             }

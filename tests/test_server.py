@@ -12,6 +12,7 @@ from fastmcp import FastMCP
 
 import dwf_mcp_server.server as srv
 import dwf_mcp_server.tools.analog as analog_mod
+import dwf_mcp_server.tools.digital as digital_mod
 from dwf_mcp_server.diagnostics import check_environment
 from dwf_mcp_server.session import DeviceManager
 from dwf_mcp_server.tools.analog import analog_capture, generate_waveform, measure
@@ -44,9 +45,10 @@ def _make_manager_mock(device_mock: MagicMock | None = None) -> MagicMock:
 
 @pytest.fixture(autouse=True)
 def _reset_active_channel_state() -> None:
-    """Clear analog_capture/generate_waveform channel persistence between tests."""
+    """Clear lifecycle channel persistence (scope/AWG/LA) between tests."""
     analog_mod._active_scope_channel.clear()
     analog_mod._active_awg_channel.clear()
+    digital_mod._active_la_channels.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -1487,6 +1489,34 @@ class TestGenerateWaveformLifecycle:
         assert "error" in result
         assert "channel" in result["error"].lower()
 
+    def test_action_stop_clears_persisted_channel_on_match(self) -> None:
+        """A second stop after start+stop must error because persistence was cleared."""
+        manager_mock, _, _ = self._make_mocks()
+
+        with patch("dwf_mcp_server.tools.analog.get_manager", return_value=manager_mock):
+            generate_waveform(channel=2, action="start")
+            first = generate_waveform(action="stop")  # uses persisted CH2
+            second = generate_waveform(action="stop")  # persistence should be cleared
+
+        assert first.get("channel") == 2
+        assert "error" in second, f"expected stale-state error, got {second}"
+
+    def test_action_stop_with_explicit_channel_preserves_persistence(self) -> None:
+        """Explicitly stopping a non-persisted channel must NOT clear persistence."""
+        manager_mock, _, _ = self._make_mocks()
+
+        with patch("dwf_mcp_server.tools.analog.get_manager", return_value=manager_mock):
+            generate_waveform(channel=2, action="start")  # persisted = 2
+            explicit_stop = generate_waveform(
+                channel=1, action="stop"
+            )  # stop CH1, keep persisted=2
+            implicit_stop = generate_waveform(action="stop")  # should still find CH2
+
+        assert explicit_stop.get("channel") == 1
+        assert implicit_stop.get("channel") == 2, (
+            f"persistence was cleared by explicit-channel stop: {implicit_stop}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # analog.analog_capture — action lifecycle (start/read/stop)
@@ -1616,6 +1646,35 @@ class TestAnalogCaptureLifecycle:
         assert "error" in result
         assert "channel" in result["error"].lower() or "no active" in result["error"].lower()
 
+    def test_action_stop_response_includes_persisted_channel(self) -> None:
+        """Stop response should report the channel that was started, for shape consistency."""
+        manager_mock, dwf_mock, _ = self._make_mocks()
+
+        with (
+            patch("dwf_mcp_server.tools.analog.dwf", dwf_mock),
+            patch("dwf_mcp_server.tools.analog.get_manager", return_value=manager_mock),
+        ):
+            analog_capture(channel=2, action="start")
+            result = analog_capture(action="stop")
+
+        assert result["action"] == "stop"
+        assert result["status"] == "stopped"
+        assert result["channel"] == 2
+
+    def test_action_stop_clears_persisted_channel(self) -> None:
+        """After stop, a follow-up read with no channel must error (persistence cleared)."""
+        manager_mock, dwf_mock, _ = self._make_mocks()
+
+        with (
+            patch("dwf_mcp_server.tools.analog.dwf", dwf_mock),
+            patch("dwf_mcp_server.tools.analog.get_manager", return_value=manager_mock),
+        ):
+            analog_capture(channel=2, action="start")
+            analog_capture(action="stop")
+            result = analog_capture(action="read")
+
+        assert "error" in result, f"expected error after stop+read, got {result}"
+
 
 # ---------------------------------------------------------------------------
 # digital.digital_capture — action lifecycle (start/read/stop)
@@ -1711,6 +1770,33 @@ class TestDigitalCaptureLifecycle:
 
         assert "error" in result
         manager_mock.release.assert_called_once_with(0)
+
+    def test_action_read_uses_persisted_channels_when_omitted(self) -> None:
+        """After start with channels=[0, 2], read without channels reuses [0, 2]."""
+        manager_mock, dwf_mock, _ = self._make_mocks()
+
+        with (
+            patch("dwf_mcp_server.tools.digital.dwf", dwf_mock),
+            patch("dwf_mcp_server.tools.digital.get_manager", return_value=manager_mock),
+        ):
+            digital_capture(channels=[0, 2], action="start")
+            result = digital_capture(action="read")
+
+        assert result["channels"] == [0, 2]
+
+    def test_action_stop_clears_persisted_channels(self) -> None:
+        """After stop, a follow-up read with no channels falls back to all 16."""
+        manager_mock, dwf_mock, _ = self._make_mocks()
+
+        with (
+            patch("dwf_mcp_server.tools.digital.dwf", dwf_mock),
+            patch("dwf_mcp_server.tools.digital.get_manager", return_value=manager_mock),
+        ):
+            digital_capture(channels=[0, 2], action="start")
+            digital_capture(action="stop")
+            result = digital_capture(action="read")
+
+        assert result["channels"] == list(range(16))
 
 
 # ---------------------------------------------------------------------------
