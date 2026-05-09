@@ -18,6 +18,17 @@ _active_scope_channel: dict[int, int] = {}
 _active_awg_channel: dict[int, int] = {}
 
 
+def _validate_analog_channel(channel: int) -> None:
+    """Reject channel values outside 1..2 before subtracting to a 0-based index.
+
+    Without this guard, `channel=0` would silently become index -1 and
+    Python's negative indexing would target CH2/W2 instead of erroring.
+    """
+    if channel not in (1, 2):
+        msg = f"channel must be 1 or 2, got {channel}"
+        raise ValueError(msg)
+
+
 def analog_capture(
     channel: int | None = None,
     sample_rate: float = 1_000_000.0,
@@ -82,6 +93,7 @@ def analog_capture(
                         "call analog_capture(action='start') first or pass channel."
                     )
                 }
+            _validate_analog_channel(ch)
             ch_idx = ch - 1
             scope.read_status(read_data=True)
             samples: list[float] = scope[ch_idx].get_data().tolist()
@@ -94,6 +106,7 @@ def analog_capture(
             }
 
         ch = channel if channel is not None else 1
+        _validate_analog_channel(ch)
         ch_idx = ch - 1
 
         if action == "start":
@@ -196,6 +209,7 @@ def generate_waveform(
                         "call generate_waveform(action='start') first or pass channel."
                     )
                 }
+            _validate_analog_channel(ch_num)
             device.analog_output[ch_num - 1].configure(start=False)
             # Only clear persistence if we stopped the persisted channel — preserves
             # the active channel record when the caller explicitly stops a different one.
@@ -204,6 +218,7 @@ def generate_waveform(
             return {"channel": ch_num, "action": "stop", "status": "stopped"}
 
         ch_num = channel if channel is not None else 1
+        _validate_analog_channel(ch_num)
         ch = device.analog_output[ch_num - 1]
         ch.setup(
             waveform,

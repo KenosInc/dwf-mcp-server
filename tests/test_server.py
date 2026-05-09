@@ -1675,6 +1675,22 @@ class TestAnalogCaptureLifecycle:
 
         assert "error" in result, f"expected error after stop+read, got {result}"
 
+    def test_invalid_channel_returns_error(self) -> None:
+        """channel=0 must error instead of silently indexing CH2 via Python negative indexing."""
+        manager_mock, dwf_mock, _ = self._make_mocks()
+
+        with (
+            patch("dwf_mcp_server.tools.analog.dwf", dwf_mock),
+            patch("dwf_mcp_server.tools.analog.get_manager", return_value=manager_mock),
+        ):
+            result_zero = analog_capture(channel=0, action="start")
+            result_high = analog_capture(channel=3, action="start")
+
+        assert "error" in result_zero
+        assert "channel" in result_zero["error"].lower()
+        assert "error" in result_high
+        assert "channel" in result_high["error"].lower()
+
 
 # ---------------------------------------------------------------------------
 # digital.digital_capture — action lifecycle (start/read/stop)
