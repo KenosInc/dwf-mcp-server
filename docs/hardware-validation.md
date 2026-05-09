@@ -226,3 +226,132 @@ Device session persisted across `generate_waveform` → `measure` calls.
 `close_device` successfully released the device (`is_open: 0`).
 
 Result: PASS — hybrid session lifecycle verified end-to-end through MCP protocol.
+
+## Action lifecycle API (PR #70)
+
+Verifies the `action="start" / "read" / "stop"` parameter on `generate_waveform`,
+`analog_capture`, and `digital_capture`, plus the `device_state` tool. The
+critical behavior under test is the **active-channel persistence** introduced
+in response to CodeRabbit feedback: follow-up `read` / `stop` calls without an
+explicit `channel` argument must reuse the channel from the most recent `start`
+on the same device.
+
+### Environment
+
+| Component | Detail |
+|-----------|--------|
+| Device | Analog Discovery 3 (SN: 210415BF8E27) |
+| Date | 2026-05-09 |
+| Driver path | Direct Python calls into `dwf_mcp_server.tools.*` (not via MCP stdio) |
+
+### Test 3 — `device_state` reflects start/stop transitions (no wiring required)
+
+Goal: confirm that `device_state` accurately reports per-sub-instrument status,
+and that `generate_waveform(action="stop")` with no explicit `channel` correctly
+stops the channel that was started.
+
+Sequence:
+
+1. `device_state()` before any device tool — `session_open: false`.
+2. `generate_waveform(channel=1, action="start", waveform="sine", frequency=1000.0, amplitude=1.0)`.
+3. `device_state()` — `awg.ch1.status == "running"`, other sub-instruments `"ready"`.
+4. `generate_waveform(action="stop")` — no `channel`, must reuse persisted CH1.
+5. `device_state()` — `awg.ch1.status == "ready"` (transitioned out of running).
+
+Observed:
+
+```text
+[A] device_state -> {'session_open': False}
+[B] AWG start    -> {'channel': 1, 'status': 'running', ...}
+    device_state -> awg.ch1: {'status': 'running'}
+[C] AWG stop (no channel) -> {'channel': 1, 'action': 'stop', 'status': 'stopped'}
+    device_state -> awg.ch1: {'status': 'ready'}
+```
+
+Result: **PASS** — channel persistence works and `device_state` reflects every transition.
+
+### Test 1 — W1 → DIO0 loopback (LA observes AWG)
+
+Goal: verify the digital-capture lifecycle (start/read/stop) sees a live AWG
+signal across multiple `read` calls.
+
+Setup: W1 → DIO0, common GND.
+
+Signal: 1 kHz square wave, amplitude 1.5 V, offset 1.65 V (i.e. 0.15 V to 3.15 V,
+within 3.3 V DIO logic levels).
+
+Sequence:
+
+1. `generate_waveform(channel=1, action="start", waveform="square", frequency=1000.0, amplitude=1.5, offset=1.65)`.
+2. `digital_capture(action="start", sample_rate=100_000.0, buffer_size=8192)` — circular SCAN_SHIFT buffer (~82 ms window).
+3. `digital_capture(channels=[0], action="read")` × 3 — each call should fetch the latest buffer contents.
+4. `digital_capture(action="stop")` then `generate_waveform(action="stop")` (no channel — relies on persistence).
+
+Observed transition counts and reconstructed frequencies:
+
+| Read | Transitions | Reconstructed freq |
+|------|------------:|-------------------:|
+| #1 | 163 | 994.87 Hz |
+| #2 | 164 | 1000.98 Hz |
+| #3 | 164 | 1000.98 Hz |
+
+All within 1 % of the expected 1000 Hz. `generate_waveform(action="stop")`
+returned `{"channel": 1, ...}`, confirming AWG persistence reused CH1.
+
+> **Note on naming.** The PR test plan referred to "W1 → DIO**1**", but the AD3
+> board labels DIOs as 0-indexed (DIO0–DIO15). The wire was physically connected
+> to the pin labeled "DIO0", which is the first digital pin and corresponds to
+> bit 0 of the LA sample value. A diagnostic sweep across all 16 DIOs confirmed
+> only DIO0 toggled at 1 kHz; the test was rerun with `channels=[0]`.
+
+Result: **PASS** — multi-`read` lifecycle works, AWG and LA persistence both
+verified.
+
+### Test 2 — W1 → scope CH1 (AWG continues across concurrent scope reads)
+
+Goal: confirm that `generate_waveform(action="start")` keeps the AWG running
+across multiple `analog_capture(action="read")` invocations and that scope
+channel persistence works for `read` and `stop`.
+
+Setup: W1 → 1+ (scope CH1+), 1- left open (single-ended).
+
+Signal: 1 kHz sine, amplitude 1 V, offset 0 V → ±1 V (Vpp = 2 V).
+
+Sequence:
+
+1. `generate_waveform(channel=1, action="start", waveform="sine", frequency=1000.0, amplitude=1.0)`.
+2. `analog_capture(channel=1, action="start", sample_rate=100_000.0, buffer_size=8192, voltage_range=5.0)`.
+3. `analog_capture(action="read")` × 5 (no `channel` argument — uses persisted CH1).
+4. `analog_capture(action="stop")` → `generate_waveform(action="stop")` (both rely on persistence).
+
+Observed:
+
+| Read | n samples | Vpp (V) | Mean (V) |
+|------|----------:|--------:|---------:|
+| #1 | 8192 | 2.000 | +0.0034 |
+| #2 | 8192 | 2.000 | +0.0016 |
+| #3 | 8192 | 2.000 | +0.0031 |
+| #4 | 8192 | 2.000 | +0.0029 |
+| #5 | 8192 | 2.000 | +0.0033 |
+
+Vpp range across 5 reads: 2.000 – 2.000 V (variation 0.0007 V, within scope
+quantization noise). Mean voltage stable at ≈ 0 V, matching the configured
+offset.
+
+Both `read` and `stop` were called without a `channel` argument and returned
+`{"channel": 1, ...}`, confirming scope channel persistence.
+
+Result: **PASS** — AWG output is continuous across the entire scope-read loop;
+no restart or amplitude drift between reads.
+
+### Summary
+
+| Test | Wiring | Verified behaviour | Result |
+|------|--------|--------------------|--------|
+| Test 3 — `device_state` transitions | none | `session_open` toggle, AWG `running`→`ready`, `generate_waveform(action="stop")` channel persistence | PASS |
+| Test 1 — W1 → DIO0 LA loopback | W1 → DIO0 + GND | LA `start`/`read`×N/`stop` lifecycle, AWG persistence on `stop` | PASS |
+| Test 2 — W1 → scope CH1 persistence | W1 → 1+ (single-ended) | AWG continuity across 5 `analog_capture(action="read")` calls, scope channel persistence on `read` and `stop` | PASS |
+
+All three scenarios pass on AD3. The action-lifecycle API (`start` / `read` /
+`stop`) and the post-CodeRabbit channel-persistence behaviour are confirmed
+working against real hardware.
