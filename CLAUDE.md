@@ -15,15 +15,18 @@ libraries (Adept 2 Runtime, `libdwf.so`) are added by users via a derived Docker
 gh api repos/{owner}/{repo}/milestones                                       # list
 gh api repos/{owner}/{repo}/milestones -f title="..." -f description="..."   # create
 
-# Install for development
-uv pip install -e ".[dev]"
+# Install for development (creates .venv from uv.lock)
+uv sync --frozen --extra dev
+
+# Refresh uv.lock when pyproject.toml dependencies change
+uv lock
 
 # Run all tests (no hardware required)
-pytest tests/ -v
+uv run pytest tests/ -v
 
 # Run a single test class or method
-pytest tests/test_server.py::TestComputeMeasurement -v
-pytest tests/test_server.py::TestListDevices::test_returns_device_list -v
+uv run pytest tests/test_server.py::TestComputeMeasurement -v
+uv run pytest tests/test_server.py::TestListDevices::test_returns_device_list -v
 
 # Lint & format
 ruff format --check .
@@ -32,7 +35,7 @@ ruff format .          # auto-fix formatting
 ruff check --fix .     # auto-fix lint issues
 
 # Run server locally (requires libdwf on host)
-dwf-mcp-server
+uv run dwf-mcp-server
 ```
 
 ## Architecture
@@ -124,6 +127,10 @@ Docker image includes only their system-level dependencies (e.g. `libusb-1.0-0`)
 - **Pin/channel indexing**: follows hardware labels — no conversion layer
   - **DIO pins** (gpio, spi, digital_capture): **0-based** (0-15), matching DIO0-DIO15
   - **Analog channels** (oscilloscope, AWG): **1-based** (1-2), matching CH1/CH2 and W1/W2
+- **Lock file**: any change to `pyproject.toml` dependencies must be accompanied
+  by a refreshed `uv.lock` (`uv lock`). CI runs `uv sync --frozen` and Docker
+  builds with `uv sync --frozen --no-dev`, both of which fail fast when the lock
+  has drifted from `pyproject.toml`.
 
 ## Release Procedure
 
