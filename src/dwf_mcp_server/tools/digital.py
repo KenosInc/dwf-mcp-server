@@ -5,13 +5,21 @@ from typing import Literal
 
 import dwfpy as dwf
 from fastmcp import FastMCP
+from fastmcp.tools.tool import ToolResult
 
+from dwf_mcp_server import rendering
 from dwf_mcp_server.session import get_manager
 
 # Tracks the channel subset most recently requested by digital_capture(action="start"),
 # keyed by device_index. None / missing entries mean "all 16 channels". Used to fill
 # in `channels` for a follow-up `read` call when the caller omits it; cleared on stop.
 _active_la_channels: dict[int, list[int]] = {}
+
+# Per-device sample_rate captured at action="start" time. Used by action="read"
+# to render the PNG with the rate the capture was actually configured with —
+# otherwise the rendered time axis would silently use whatever default the
+# caller passed in for `read` (typically 1 MHz).
+_active_la_sample_rate: dict[int, float] = {}
 
 
 def digital_capture(
@@ -21,7 +29,8 @@ def digital_capture(
     buffer_size: int | None = None,
     action: Literal["single", "start", "read", "stop"] = "single",
     device_index: int = 0,
-) -> dict:
+    render_image: bool = False,
+) -> dict | ToolResult:
     """Capture digital logic signals using the logic analyzer.
 
     The `action` parameter selects the capture lifecycle:
@@ -50,10 +59,15 @@ def digital_capture(
         buffer_size: Circular buffer size for continuous capture (default: 8192).
         action: Capture lifecycle action (default: "single").
         device_index: Device index (default: 0, the first device).
+        render_image: When True, also return a logic-analyzer style PNG plot
+            of the captured samples (default: False). Only meaningful for
+            `single`/`read`; ignored for `start`/`stop`. Errors and start/stop
+            responses always return a plain dict.
 
     Returns:
-        For `single`/`read`: dict with `samples` (list of ints) and metadata.
-        For `start`/`stop`: dict with `status` and configuration metadata.
+        Plain dict by default. When `render_image=True` and samples were
+        captured, a `ToolResult` carrying both the dict (as structured content)
+        and the PNG image.
     """
     try:
         device = get_manager().acquire(device_index)
@@ -62,6 +76,7 @@ def digital_capture(
         if action == "stop":
             la.configure(start=False)
             _active_la_channels.pop(device_index, None)
+            _active_la_sample_rate.pop(device_index, None)
             return {"action": "stop", "status": "stopped"}
 
         if action == "read":
@@ -73,12 +88,20 @@ def digital_capture(
                 effective = _active_la_channels.get(device_index, list(range(16)))
             mask = sum(1 << ch for ch in effective)
             samples = [s & mask for s in raw]
-            return {
+            response = {
                 "channels": effective,
                 "action": "read",
                 "sample_count": len(samples),
                 "samples": samples,
             }
+            if render_image:
+                # Prefer the rate captured at `start` so the rendered time
+                # axis matches the actual capture configuration, not whatever
+                # default the caller happened to pass for `read`.
+                effective_rate = _active_la_sample_rate.get(device_index, sample_rate)
+                png = rendering.render_digital(effective, samples, effective_rate)
+                return rendering.build_image_tool_result(response, png)
+            return response
 
         if action == "start":
             buf = buffer_size if buffer_size is not None else 8192
@@ -91,6 +114,7 @@ def digital_capture(
             )
             persisted = list(channels) if channels is not None else list(range(16))
             _active_la_channels[device_index] = persisted
+            _active_la_sample_rate[device_index] = sample_rate
             return {
                 "action": "start",
                 "status": "running",
@@ -120,13 +144,17 @@ def digital_capture(
             filtered = raw
             channels = list(range(16))
 
-        return {
+        response = {
             "channels": channels,
             "sample_rate": sample_rate,
             "duration": actual_duration,
             "sample_count": len(filtered),
             "samples": filtered,
         }
+        if render_image:
+            png = rendering.render_digital(channels, filtered, sample_rate)
+            return rendering.build_image_tool_result(response, png)
+        return response
     except Exception as exc:  # noqa: BLE001
         get_manager().release(device_index)
         return {"error": str(exc)}
