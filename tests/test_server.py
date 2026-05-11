@@ -52,7 +52,10 @@ def _reset_active_channel_state() -> None:
     """Clear lifecycle channel persistence (scope/AWG/LA) between tests."""
     analog_mod._active_scope_channel.clear()
     analog_mod._active_awg_channel.clear()
+    analog_mod._active_scope_sample_rate.clear()
+    analog_mod._active_scope_voltage_range.clear()
     digital_mod._active_la_channels.clear()
+    digital_mod._active_la_sample_rate.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -2163,6 +2166,64 @@ class TestAnalogCaptureRenderImage:
         # Renderer must not have been called on the start path
         render_mock.assert_not_called()
 
+    def test_read_render_uses_start_sample_rate_and_voltage_range(self) -> None:
+        """read+render_image must use the rate/range captured at start, not the
+        caller's defaults. Without this, the PNG axes would silently mismatch
+        the actual capture configuration."""
+        manager_mock, dwf_mock = self._make_mocks()
+        analog_mod._active_scope_channel[0] = 1
+        analog_mod._active_scope_sample_rate[0] = 500_000.0
+        analog_mod._active_scope_voltage_range[0] = 2.0
+
+        with (
+            patch("dwf_mcp_server.tools.analog.dwf", dwf_mock),
+            patch("dwf_mcp_server.tools.analog.get_manager", return_value=manager_mock),
+            patch(
+                "dwf_mcp_server.tools.analog.rendering.render_analog",
+                return_value=_FAKE_PNG,
+            ) as render_mock,
+        ):
+            # Caller does not pass sample_rate/voltage_range — defaults are 1 MHz / 5 V.
+            analog_capture(action="read", render_image=True)
+
+        args, _ = render_mock.call_args
+        assert args[1] == 500_000.0  # sample_rate from start
+        assert args[2] == 2.0  # voltage_range from start
+
+    def test_start_persists_sample_rate_and_voltage_range(self) -> None:
+        """start must record sample_rate / voltage_range for the read path."""
+        manager_mock, dwf_mock = self._make_mocks()
+
+        with (
+            patch("dwf_mcp_server.tools.analog.dwf", dwf_mock),
+            patch("dwf_mcp_server.tools.analog.get_manager", return_value=manager_mock),
+        ):
+            analog_capture(
+                channel=2,
+                sample_rate=2_000_000.0,
+                voltage_range=10.0,
+                action="start",
+            )
+
+        assert analog_mod._active_scope_sample_rate[0] == 2_000_000.0
+        assert analog_mod._active_scope_voltage_range[0] == 10.0
+
+    def test_stop_clears_persisted_axes(self) -> None:
+        """stop must clear the persisted sample_rate / voltage_range."""
+        analog_mod._active_scope_channel[0] = 1
+        analog_mod._active_scope_sample_rate[0] = 500_000.0
+        analog_mod._active_scope_voltage_range[0] = 2.0
+        manager_mock, dwf_mock = self._make_mocks()
+
+        with (
+            patch("dwf_mcp_server.tools.analog.dwf", dwf_mock),
+            patch("dwf_mcp_server.tools.analog.get_manager", return_value=manager_mock),
+        ):
+            analog_capture(action="stop")
+
+        assert 0 not in analog_mod._active_scope_sample_rate
+        assert 0 not in analog_mod._active_scope_voltage_range
+
 
 class TestMeasureRenderImage:
     def _make_mocks(self) -> tuple[MagicMock, MagicMock]:
@@ -2329,6 +2390,29 @@ class TestDigitalCaptureRenderImage:
         args, _ = render_mock.call_args
         assert args[0] == [0, 1, 3]
         assert args[1] == [0x0B, 0x0B, 0x0A]
+
+    def test_read_render_uses_start_sample_rate(self) -> None:
+        """When start configured 500 kHz, read+render_image must use 500 kHz —
+        not the caller's default `sample_rate` (1 MHz). Without this, the PNG
+        time axis would silently be off by 2×."""
+        manager_mock, dwf_mock = self._make_mocks([0xFF, 0x0F])
+        digital_mod._active_la_channels[0] = [0, 1]
+        digital_mod._active_la_sample_rate[0] = 500_000.0  # set at `start`
+
+        with (
+            patch("dwf_mcp_server.tools.digital.dwf", dwf_mock),
+            patch("dwf_mcp_server.tools.digital.get_manager", return_value=manager_mock),
+            patch(
+                "dwf_mcp_server.tools.digital.rendering.render_digital",
+                return_value=_FAKE_PNG,
+            ) as render_mock,
+        ):
+            # Caller does not pass sample_rate — defaults to 1 MHz.
+            digital_capture(action="read", render_image=True)
+
+        # Renderer must have been given the persisted 500 kHz, not the default.
+        args, _ = render_mock.call_args
+        assert args[2] == 500_000.0
 
 
 # ---------------------------------------------------------------------------

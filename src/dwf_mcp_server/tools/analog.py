@@ -19,6 +19,14 @@ from dwf_mcp_server.session import get_manager
 _active_scope_channel: dict[int, int] = {}
 _active_awg_channel: dict[int, int] = {}
 
+# Per-device sample_rate / voltage_range captured at action="start" time.
+# Used by action="read" to render the PNG with the axes the capture was
+# actually configured with — without this, a `read` call would pick up
+# whatever defaults the caller passed in (typically 1 MHz / 5 V) and the
+# rendered axes would be wrong.
+_active_scope_sample_rate: dict[int, float] = {}
+_active_scope_voltage_range: dict[int, float] = {}
+
 
 def _validate_analog_channel(channel: int) -> None:
     """Reject channel values outside 1..2 before subtracting to a 0-based index.
@@ -87,6 +95,8 @@ def analog_capture(
         if action == "stop":
             scope.configure(start=False)
             ch = _active_scope_channel.pop(device_index, None)
+            _active_scope_sample_rate.pop(device_index, None)
+            _active_scope_voltage_range.pop(device_index, None)
             response: dict = {"action": "stop", "status": "stopped"}
             if ch is not None:
                 response["channel"] = ch
@@ -113,7 +123,12 @@ def analog_capture(
                 "samples": samples,
             }
             if render_image:
-                png = rendering.render_analog(samples, sample_rate, voltage_range)
+                # Prefer the rate/range captured at `start` so the rendered
+                # axes match the actual capture configuration, not whatever
+                # default the caller happened to pass for `read`.
+                effective_rate = _active_scope_sample_rate.get(device_index, sample_rate)
+                effective_range = _active_scope_voltage_range.get(device_index, voltage_range)
+                png = rendering.render_analog(samples, effective_rate, effective_range)
                 return rendering.build_image_tool_result(response, png)
             return response
 
@@ -132,6 +147,8 @@ def analog_capture(
                 start=True,
             )
             _active_scope_channel[device_index] = ch
+            _active_scope_sample_rate[device_index] = sample_rate
+            _active_scope_voltage_range[device_index] = voltage_range
             return {
                 "channel": ch,
                 "action": "start",

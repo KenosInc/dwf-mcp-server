@@ -15,6 +15,12 @@ from dwf_mcp_server.session import get_manager
 # in `channels` for a follow-up `read` call when the caller omits it; cleared on stop.
 _active_la_channels: dict[int, list[int]] = {}
 
+# Per-device sample_rate captured at action="start" time. Used by action="read"
+# to render the PNG with the rate the capture was actually configured with —
+# otherwise the rendered time axis would silently use whatever default the
+# caller passed in for `read` (typically 1 MHz).
+_active_la_sample_rate: dict[int, float] = {}
+
 
 def digital_capture(
     channels: list[int] | None = None,
@@ -70,6 +76,7 @@ def digital_capture(
         if action == "stop":
             la.configure(start=False)
             _active_la_channels.pop(device_index, None)
+            _active_la_sample_rate.pop(device_index, None)
             return {"action": "stop", "status": "stopped"}
 
         if action == "read":
@@ -88,7 +95,11 @@ def digital_capture(
                 "samples": samples,
             }
             if render_image:
-                png = rendering.render_digital(effective, samples, sample_rate)
+                # Prefer the rate captured at `start` so the rendered time
+                # axis matches the actual capture configuration, not whatever
+                # default the caller happened to pass for `read`.
+                effective_rate = _active_la_sample_rate.get(device_index, sample_rate)
+                png = rendering.render_digital(effective, samples, effective_rate)
                 return rendering.build_image_tool_result(response, png)
             return response
 
@@ -103,6 +114,7 @@ def digital_capture(
             )
             persisted = list(channels) if channels is not None else list(range(16))
             _active_la_channels[device_index] = persisted
+            _active_la_sample_rate[device_index] = sample_rate
             return {
                 "action": "start",
                 "status": "running",
