@@ -8,23 +8,9 @@ from typing import Literal
 import dwfpy as dwf
 from fastmcp import FastMCP
 from fastmcp.tools.tool import ToolResult
-from fastmcp.utilities.types import Image
 
 from dwf_mcp_server import rendering
 from dwf_mcp_server.session import get_manager
-
-
-def _image_tool_result(response: dict, png: bytes) -> ToolResult:
-    """Wrap a tool response dict + PNG into a ToolResult.
-
-    Returning a `ToolResult` (instead of a `(dict, Image)` tuple) preserves
-    `structured_content` on the wire — the tuple form drops it under
-    fastmcp 3.2.x because the second tuple slot is interpreted as the
-    structured payload.
-    """
-    image_content = Image(data=png, format="png").to_image_content()
-    return ToolResult(content=[image_content], structured_content=response)
-
 
 # Tracks the channel last used by analog_capture(action="start") and
 # generate_waveform(action="start"), keyed by device_index. Used to fill in
@@ -128,7 +114,7 @@ def analog_capture(
             }
             if render_image:
                 png = rendering.render_analog(samples, sample_rate, voltage_range)
-                return _image_tool_result(response, png)
+                return rendering.build_image_tool_result(response, png)
             return response
 
         ch = channel if channel is not None else 1
@@ -180,7 +166,7 @@ def analog_capture(
         }
         if render_image:
             png = rendering.render_analog(samples, sample_rate, voltage_range)
-            return _image_tool_result(response, png)
+            return rendering.build_image_tool_result(response, png)
         return response
     except Exception as exc:  # noqa: BLE001
         get_manager().release(device_index)
@@ -339,7 +325,7 @@ def measure(
         response = {"channel": channel, "measurement": measurement, "value": value, "unit": unit}
         if render_image:
             png = rendering.render_measurement(samples, sample_rate, measurement, value)
-            return _image_tool_result(response, png)
+            return rendering.build_image_tool_result(response, png)
         return response
     except Exception as exc:  # noqa: BLE001
         get_manager().release(device_index)

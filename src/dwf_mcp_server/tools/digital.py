@@ -6,21 +6,9 @@ from typing import Literal
 import dwfpy as dwf
 from fastmcp import FastMCP
 from fastmcp.tools.tool import ToolResult
-from fastmcp.utilities.types import Image
 
 from dwf_mcp_server import rendering
 from dwf_mcp_server.session import get_manager
-
-
-def _image_tool_result(response: dict, png: bytes) -> ToolResult:
-    """Wrap a tool response dict + PNG into a ToolResult.
-
-    See the matching helper in tools/analog.py for the rationale (preserves
-    `structured_content` on the wire — the `(dict, Image)` tuple form does not).
-    """
-    image_content = Image(data=png, format="png").to_image_content()
-    return ToolResult(content=[image_content], structured_content=response)
-
 
 # Tracks the channel subset most recently requested by digital_capture(action="start"),
 # keyed by device_index. None / missing entries mean "all 16 channels". Used to fill
@@ -101,7 +89,7 @@ def digital_capture(
             }
             if render_image:
                 png = rendering.render_digital(effective, samples, sample_rate)
-                return _image_tool_result(response, png)
+                return rendering.build_image_tool_result(response, png)
             return response
 
         if action == "start":
@@ -153,7 +141,7 @@ def digital_capture(
         }
         if render_image:
             png = rendering.render_digital(channels, filtered, sample_rate)
-            return _image_tool_result(response, png)
+            return rendering.build_image_tool_result(response, png)
         return response
     except Exception as exc:  # noqa: BLE001
         get_manager().release(device_index)

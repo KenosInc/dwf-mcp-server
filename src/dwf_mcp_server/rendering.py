@@ -4,11 +4,16 @@ These helpers turn captured samples into PNG plots so vision-capable LLM
 clients can "see" the signal directly instead of reasoning over thousands
 of raw sample values.
 
-Pure functions — no hardware access, no MCP types.
+Pure functions — no hardware access, no MCP types — plus one small MCP
+adapter (`build_image_tool_result`) that the tool modules share.
 """
 
 import io
+import math
 import os
+
+from fastmcp.tools.tool import ToolResult
+from fastmcp.utilities.types import Image
 
 # Force the headless Agg backend before any matplotlib import. setdefault so a
 # user-supplied MPLBACKEND env var still wins.
@@ -17,6 +22,38 @@ os.environ.setdefault("MPLBACKEND", "Agg")
 
 _FIGSIZE = (8.0, 4.0)
 _DPI = 100
+
+
+def build_image_tool_result(response: dict, png: bytes) -> ToolResult:
+    """Wrap a tool response dict + PNG into a fastmcp `ToolResult`.
+
+    Returning a `ToolResult` (instead of a `(dict, Image)` tuple) preserves
+    `structured_content` on the wire — the tuple form drops it under
+    fastmcp 3.2.x because the second tuple slot is interpreted as the
+    structured payload.
+    """
+    image_content = Image(data=png, format="png").to_image_content()
+    return ToolResult(content=[image_content], structured_content=response)
+
+
+def _validate_sample_rate(sample_rate: float) -> None:
+    if not (sample_rate > 0):
+        msg = f"sample_rate must be > 0, got {sample_rate!r}"
+        raise ValueError(msg)
+
+
+def _validate_voltage_range(voltage_range: float) -> None:
+    if not (voltage_range > 0):
+        msg = f"voltage_range must be > 0, got {voltage_range!r}"
+        raise ValueError(msg)
+
+
+def _validate_finite_floats(samples: list[float]) -> None:
+    """Reject NaN / ±Inf — matplotlib would render a degraded plot silently."""
+    for i, v in enumerate(samples):
+        if not math.isfinite(v):
+            msg = f"samples contain non-finite value at index {i}: {v!r}"
+            raise ValueError(msg)
 
 
 def _select_time_unit(duration_s: float) -> tuple[str, float]:
@@ -45,6 +82,10 @@ def render_analog(
     Returns:
         PNG bytes (~10–50 KB at the default figure size).
     """
+    _validate_sample_rate(sample_rate)
+    _validate_voltage_range(voltage_range)
+    _validate_finite_floats(samples)
+
     import matplotlib.pyplot as plt  # noqa: PLC0415  -- intentionally lazy
 
     fig, ax = plt.subplots(figsize=_FIGSIZE, dpi=_DPI)
@@ -94,6 +135,8 @@ def render_digital(
     Returns:
         PNG bytes.
     """
+    _validate_sample_rate(sample_rate)
+
     import matplotlib.pyplot as plt  # noqa: PLC0415  -- intentionally lazy
 
     rows = max(len(channels), 1)
@@ -164,6 +207,9 @@ def render_measurement(
     Returns:
         PNG bytes.
     """
+    _validate_sample_rate(sample_rate)
+    _validate_finite_floats(samples)
+
     import matplotlib.pyplot as plt  # noqa: PLC0415  -- intentionally lazy
 
     fig, ax = plt.subplots(figsize=_FIGSIZE, dpi=_DPI)

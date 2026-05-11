@@ -2020,6 +2020,30 @@ class TestRenderingHelpers:
             with pytest.raises(RuntimeError, match="savefig boom"):
                 rendering.render_analog([0.1, 0.2, 0.3], 1e6, 5.0)
 
+    @pytest.mark.parametrize("bad_rate", [0, -1.0, -100.0])
+    def test_validation_rejects_non_positive_sample_rate(self, bad_rate: float) -> None:
+        with pytest.raises(ValueError, match="sample_rate must be > 0"):
+            render_analog([0.1, 0.2, 0.3], sample_rate=bad_rate, voltage_range=5.0)
+        with pytest.raises(ValueError, match="sample_rate must be > 0"):
+            render_digital([0], [1, 0, 1], sample_rate=bad_rate)
+        with pytest.raises(ValueError, match="sample_rate must be > 0"):
+            render_measurement([0.1, 0.2], sample_rate=bad_rate, measurement="dc", value=0.0)
+
+    @pytest.mark.parametrize("bad_range", [0, -1.0, -5.0])
+    def test_validation_rejects_non_positive_voltage_range(self, bad_range: float) -> None:
+        with pytest.raises(ValueError, match="voltage_range must be > 0"):
+            render_analog([0.1, 0.2, 0.3], sample_rate=1e6, voltage_range=bad_range)
+
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+    def test_validation_rejects_non_finite_samples_analog(self, bad: float) -> None:
+        with pytest.raises(ValueError, match="non-finite"):
+            render_analog([0.1, bad, 0.3], sample_rate=1e6, voltage_range=5.0)
+
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf")])
+    def test_validation_rejects_non_finite_samples_measurement(self, bad: float) -> None:
+        with pytest.raises(ValueError, match="non-finite"):
+            render_measurement([0.1, bad], sample_rate=1e6, measurement="dc", value=0.0)
+
 
 # ---------------------------------------------------------------------------
 # Tool wiring with render_image=True
@@ -2117,6 +2141,27 @@ class TestAnalogCaptureRenderImage:
 
         assert isinstance(result, dict)
         assert "error" in result
+
+    def test_render_image_with_action_start_returns_plain_dict(self) -> None:
+        """action='start' must return plain dict even with render_image=True
+        (start/stop branches do not produce samples and must not render)."""
+        manager_mock, dwf_mock = self._make_mocks()
+
+        with (
+            patch("dwf_mcp_server.tools.analog.dwf", dwf_mock),
+            patch("dwf_mcp_server.tools.analog.get_manager", return_value=manager_mock),
+            patch(
+                "dwf_mcp_server.tools.analog.rendering.render_analog",
+                return_value=_FAKE_PNG,
+            ) as render_mock,
+        ):
+            result = analog_capture(channel=1, action="start", render_image=True)
+
+        assert isinstance(result, dict)
+        assert result["action"] == "start"
+        assert result["status"] == "running"
+        # Renderer must not have been called on the start path
+        render_mock.assert_not_called()
 
 
 class TestMeasureRenderImage:
@@ -2256,6 +2301,34 @@ class TestDigitalCaptureRenderImage:
         assert isinstance(result, dict)
         assert "error" in result
         assert "render boom" in result["error"]
+
+    def test_render_image_true_read_branch(self) -> None:
+        """digital_capture(action='read', render_image=True) renders too."""
+        manager_mock, dwf_mock = self._make_mocks([0xFF, 0x0F, 0xAA])
+        # Pre-seed the LA channels persistence so action='read' has a channel set.
+        digital_mod._active_la_channels[0] = [0, 1, 3]
+
+        with (
+            patch("dwf_mcp_server.tools.digital.dwf", dwf_mock),
+            patch("dwf_mcp_server.tools.digital.get_manager", return_value=manager_mock),
+            patch(
+                "dwf_mcp_server.tools.digital.rendering.render_digital",
+                return_value=_FAKE_PNG,
+            ) as render_mock,
+        ):
+            result = digital_capture(action="read", render_image=True)
+
+        assert isinstance(result, ToolResult)
+        sc = result.structured_content
+        assert sc["action"] == "read"
+        assert sc["channels"] == [0, 1, 3]
+        # mask = 0b1011 = 11 applied to [0xFF, 0x0F, 0xAA]
+        assert sc["samples"] == [0x0B, 0x0B, 0x0A]
+        assert len(result.content) == 1
+        assert result.content[0].mimeType == "image/png"
+        args, _ = render_mock.call_args
+        assert args[0] == [0, 1, 3]
+        assert args[1] == [0x0B, 0x0B, 0x0A]
 
 
 # ---------------------------------------------------------------------------
