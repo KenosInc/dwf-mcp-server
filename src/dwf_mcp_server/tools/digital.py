@@ -5,8 +5,22 @@ from typing import Literal
 
 import dwfpy as dwf
 from fastmcp import FastMCP
+from fastmcp.tools.tool import ToolResult
+from fastmcp.utilities.types import Image
 
+from dwf_mcp_server import rendering
 from dwf_mcp_server.session import get_manager
+
+
+def _image_tool_result(response: dict, png: bytes) -> ToolResult:
+    """Wrap a tool response dict + PNG into a ToolResult.
+
+    See the matching helper in tools/analog.py for the rationale (preserves
+    `structured_content` on the wire — the `(dict, Image)` tuple form does not).
+    """
+    image_content = Image(data=png, format="png").to_image_content()
+    return ToolResult(content=[image_content], structured_content=response)
+
 
 # Tracks the channel subset most recently requested by digital_capture(action="start"),
 # keyed by device_index. None / missing entries mean "all 16 channels". Used to fill
@@ -21,7 +35,8 @@ def digital_capture(
     buffer_size: int | None = None,
     action: Literal["single", "start", "read", "stop"] = "single",
     device_index: int = 0,
-) -> dict:
+    render_image: bool = False,
+) -> dict | ToolResult:
     """Capture digital logic signals using the logic analyzer.
 
     The `action` parameter selects the capture lifecycle:
@@ -50,10 +65,15 @@ def digital_capture(
         buffer_size: Circular buffer size for continuous capture (default: 8192).
         action: Capture lifecycle action (default: "single").
         device_index: Device index (default: 0, the first device).
+        render_image: When True, also return a logic-analyzer style PNG plot
+            of the captured samples (default: False). Only meaningful for
+            `single`/`read`; ignored for `start`/`stop`. Errors and start/stop
+            responses always return a plain dict.
 
     Returns:
-        For `single`/`read`: dict with `samples` (list of ints) and metadata.
-        For `start`/`stop`: dict with `status` and configuration metadata.
+        Plain dict by default. When `render_image=True` and samples were
+        captured, a `ToolResult` carrying both the dict (as structured content)
+        and the PNG image.
     """
     try:
         device = get_manager().acquire(device_index)
@@ -73,12 +93,16 @@ def digital_capture(
                 effective = _active_la_channels.get(device_index, list(range(16)))
             mask = sum(1 << ch for ch in effective)
             samples = [s & mask for s in raw]
-            return {
+            response = {
                 "channels": effective,
                 "action": "read",
                 "sample_count": len(samples),
                 "samples": samples,
             }
+            if render_image:
+                png = rendering.render_digital(effective, samples, sample_rate)
+                return _image_tool_result(response, png)
+            return response
 
         if action == "start":
             buf = buffer_size if buffer_size is not None else 8192
@@ -120,13 +144,17 @@ def digital_capture(
             filtered = raw
             channels = list(range(16))
 
-        return {
+        response = {
             "channels": channels,
             "sample_rate": sample_rate,
             "duration": actual_duration,
             "sample_count": len(filtered),
             "samples": filtered,
         }
+        if render_image:
+            png = rendering.render_digital(channels, filtered, sample_rate)
+            return _image_tool_result(response, png)
+        return response
     except Exception as exc:  # noqa: BLE001
         get_manager().release(device_index)
         return {"error": str(exc)}

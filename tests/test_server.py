@@ -8,13 +8,17 @@ import time
 from unittest.mock import MagicMock, mock_open, patch
 
 import pytest
-from fastmcp import FastMCP
+from fastmcp import Client, FastMCP
+from fastmcp.tools.tool import ToolResult
 
 import dwf_mcp_server.server as srv
 import dwf_mcp_server.tools.analog as analog_mod
 import dwf_mcp_server.tools.digital as digital_mod
+from dwf_mcp_server import rendering
 from dwf_mcp_server.diagnostics import check_environment
+from dwf_mcp_server.rendering import render_analog, render_digital, render_measurement
 from dwf_mcp_server.session import DeviceManager
+from dwf_mcp_server.tools import analog as analog_tools
 from dwf_mcp_server.tools.analog import analog_capture, generate_waveform, measure
 from dwf_mcp_server.tools.devices import device_info, list_devices
 from dwf_mcp_server.tools.digital import digital_capture
@@ -1925,3 +1929,388 @@ class TestDeviceState:
         assert "error" in result
         assert "is_open boom" in result["error"]
         manager_mock.release.assert_called_once_with(0)
+
+
+# ---------------------------------------------------------------------------
+# rendering helpers (pure, no hardware)
+# ---------------------------------------------------------------------------
+
+
+PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+
+
+class TestRenderingHelpers:
+    """Pure tests for src/dwf_mcp_server/rendering.py — no mocks needed."""
+
+    def test_render_analog_happy_path(self) -> None:
+        samples = [math.sin(2 * math.pi * 1000 * i / 1e6) for i in range(1000)]
+        png = render_analog(samples, sample_rate=1e6, voltage_range=5.0)
+
+        assert png.startswith(PNG_MAGIC)
+        assert len(png) > 500  # rules out a trivially blank canvas
+
+    def test_render_analog_edge_cases(self) -> None:
+        """Empty / single-sample / all-zero / sub-µs / >1s windows must not raise."""
+        for samples, fs in [
+            ([], 1.0),
+            ([0.1], 1e6),
+            ([0.0] * 100, 1e6),
+            ([0.0] * 10, 1e9),  # 10 ns window — exercises µs branch
+            ([0.0] * 10, 1.0),  # 10 s window — exercises s branch
+        ]:
+            png = render_analog(samples, sample_rate=fs, voltage_range=5.0)
+            assert png.startswith(PNG_MAGIC)
+
+    def test_render_digital_happy_path(self) -> None:
+        # 4 channels, 200 ticks, with each pin toggling at a different rate
+        chans = [0, 1, 5, 7]
+        samples: list[int] = []
+        for i in range(200):
+            v = 0
+            if (i // 10) % 2:
+                v |= 1 << 0
+            if (i // 20) % 2:
+                v |= 1 << 1
+            if i > 100:
+                v |= 1 << 5
+            samples.append(v)
+
+        png = render_digital(chans, samples, sample_rate=1e6)
+
+        assert png.startswith(PNG_MAGIC)
+        assert len(png) > 500
+
+    def test_render_digital_edge_cases(self) -> None:
+        # empty samples
+        png = render_digital([0, 1], [], sample_rate=1e6)
+        assert png.startswith(PNG_MAGIC)
+
+        # no channels
+        png = render_digital([], [1, 2, 3], sample_rate=1e6)
+        assert png.startswith(PNG_MAGIC)
+
+    def test_render_measurement_branches(self) -> None:
+        """Each measurement type renders via a different annotation path."""
+        samples = [math.sin(2 * math.pi * 1000 * i / 1e6) for i in range(1000)]
+        for m, val in [
+            ("dc", 0.0),
+            ("rms", 0.707),
+            ("peak_to_peak", 2.0),
+            ("frequency", 1000.0),
+            ("period", 0.001),
+        ]:
+            png = render_measurement(samples, sample_rate=1e6, measurement=m, value=val)
+            assert png.startswith(PNG_MAGIC), f"missing PNG header for measurement={m}"
+            assert len(png) > 500
+
+    def test_render_measurement_empty_samples(self) -> None:
+        png = render_measurement([], sample_rate=1e6, measurement="dc", value=0.0)
+        assert png.startswith(PNG_MAGIC)
+
+    def test_render_measurement_no_zero_crossings(self) -> None:
+        """Frequency annotation path with no crossings must not raise."""
+        png = render_measurement([1.0] * 100, sample_rate=1e6, measurement="frequency", value=0.0)
+        assert png.startswith(PNG_MAGIC)
+
+    def test_render_failure_propagates(self) -> None:
+        """If matplotlib's savefig raises, the helper must surface the exception
+        — never return empty bytes silently."""
+        boom = RuntimeError("savefig boom")
+        with patch("matplotlib.figure.Figure.savefig", side_effect=boom):
+            with pytest.raises(RuntimeError, match="savefig boom"):
+                rendering.render_analog([0.1, 0.2, 0.3], 1e6, 5.0)
+
+
+# ---------------------------------------------------------------------------
+# Tool wiring with render_image=True
+# ---------------------------------------------------------------------------
+
+
+_FAKE_PNG = PNG_MAGIC + b"\x00" * 64  # cheap stand-in returned by patched render_*
+
+
+class TestAnalogCaptureRenderImage:
+    """analog_capture(render_image=True) returns a ToolResult; False is unchanged."""
+
+    def _make_mocks(self) -> tuple[MagicMock, MagicMock]:
+        dwf_mock = MagicMock()
+        device_mock = MagicMock()
+        scope_mock = device_mock.analog_input
+        scope_mock.read_status.return_value = dwf_mock.Status.DONE
+        scope_mock.__getitem__.return_value.get_data.return_value.tolist.return_value = [
+            0.1,
+            0.2,
+            0.3,
+        ]
+        manager_mock = _make_manager_mock(device_mock)
+        return manager_mock, dwf_mock
+
+    def test_default_returns_dict_unchanged(self) -> None:
+        manager_mock, dwf_mock = self._make_mocks()
+
+        with (
+            patch("dwf_mcp_server.tools.analog.dwf", dwf_mock),
+            patch("dwf_mcp_server.tools.analog.get_manager", return_value=manager_mock),
+        ):
+            result = analog_capture(channel=1, sample_rate=1000.0, duration=0.003)
+
+        assert isinstance(result, dict)
+        assert result["samples"] == [0.1, 0.2, 0.3]
+
+    def test_render_image_true_returns_tool_result(self) -> None:
+        manager_mock, dwf_mock = self._make_mocks()
+
+        with (
+            patch("dwf_mcp_server.tools.analog.dwf", dwf_mock),
+            patch("dwf_mcp_server.tools.analog.get_manager", return_value=manager_mock),
+            patch(
+                "dwf_mcp_server.tools.analog.rendering.render_analog",
+                return_value=_FAKE_PNG,
+            ) as render_mock,
+        ):
+            result = analog_capture(
+                channel=1, sample_rate=1000.0, duration=0.003, render_image=True
+            )
+
+        assert isinstance(result, ToolResult)
+        # structured_content must equal the dict that the False branch would return
+        sc = result.structured_content
+        assert sc["channel"] == 1
+        assert sc["samples"] == [0.1, 0.2, 0.3]
+        assert sc["unit"] == "V"
+        # exactly one ImageContent block, mimeType=image/png
+        assert len(result.content) == 1
+        img = result.content[0]
+        assert img.type == "image"
+        assert img.mimeType == "image/png"
+        # render helper saw matching args
+        render_mock.assert_called_once()
+        args, kwargs = render_mock.call_args
+        assert args[0] == [0.1, 0.2, 0.3]  # samples
+        assert args[1] == 1000.0  # sample_rate
+
+    def test_render_failure_returns_error_dict(self) -> None:
+        """A render exception must surface as {"error": ...}, not as a partial ToolResult."""
+        manager_mock, dwf_mock = self._make_mocks()
+
+        with (
+            patch("dwf_mcp_server.tools.analog.dwf", dwf_mock),
+            patch("dwf_mcp_server.tools.analog.get_manager", return_value=manager_mock),
+            patch(
+                "dwf_mcp_server.tools.analog.rendering.render_analog",
+                side_effect=RuntimeError("render boom"),
+            ),
+        ):
+            result = analog_capture(render_image=True)
+
+        assert isinstance(result, dict)
+        assert "error" in result
+        assert "render boom" in result["error"]
+
+    def test_device_error_with_render_image_returns_dict(self) -> None:
+        """If the device fails before rendering, response is the existing error dict."""
+        manager_mock = MagicMock()
+        manager_mock.acquire.side_effect = RuntimeError("No device found")
+
+        with patch("dwf_mcp_server.tools.analog.get_manager", return_value=manager_mock):
+            result = analog_capture(render_image=True)
+
+        assert isinstance(result, dict)
+        assert "error" in result
+
+
+class TestMeasureRenderImage:
+    def _make_mocks(self) -> tuple[MagicMock, MagicMock]:
+        dwf_mock = MagicMock()
+        device_mock = MagicMock()
+        scope_mock = device_mock.analog_input
+        scope_mock.read_status.return_value = dwf_mock.Status.DONE
+        scope_mock.__getitem__.return_value.get_data.return_value.tolist.return_value = [
+            1.0,
+            2.0,
+            3.0,
+        ]
+        manager_mock = _make_manager_mock(device_mock)
+        return manager_mock, dwf_mock
+
+    def test_default_returns_dict_unchanged(self) -> None:
+        manager_mock, dwf_mock = self._make_mocks()
+
+        with (
+            patch("dwf_mcp_server.tools.analog.dwf", dwf_mock),
+            patch("dwf_mcp_server.tools.analog.get_manager", return_value=manager_mock),
+        ):
+            result = measure(channel=1, measurement="dc")
+
+        assert isinstance(result, dict)
+        assert result == {"channel": 1, "measurement": "dc", "value": 2.0, "unit": "V"}
+
+    def test_render_image_true_returns_tool_result(self) -> None:
+        manager_mock, dwf_mock = self._make_mocks()
+
+        with (
+            patch("dwf_mcp_server.tools.analog.dwf", dwf_mock),
+            patch("dwf_mcp_server.tools.analog.get_manager", return_value=manager_mock),
+            patch(
+                "dwf_mcp_server.tools.analog.rendering.render_measurement",
+                return_value=_FAKE_PNG,
+            ) as render_mock,
+        ):
+            result = measure(channel=1, measurement="dc", render_image=True)
+
+        assert isinstance(result, ToolResult)
+        # Dict shape unchanged — samples must NOT leak into structured_content
+        assert result.structured_content == {
+            "channel": 1,
+            "measurement": "dc",
+            "value": 2.0,
+            "unit": "V",
+        }
+        assert len(result.content) == 1
+        assert result.content[0].mimeType == "image/png"
+        # render helper got the raw samples + scalar value
+        args, _ = render_mock.call_args
+        assert args[0] == [1.0, 2.0, 3.0]
+        assert args[2] == "dc"
+        assert args[3] == 2.0
+
+    def test_render_failure_returns_error_dict(self) -> None:
+        manager_mock, dwf_mock = self._make_mocks()
+
+        with (
+            patch("dwf_mcp_server.tools.analog.dwf", dwf_mock),
+            patch("dwf_mcp_server.tools.analog.get_manager", return_value=manager_mock),
+            patch(
+                "dwf_mcp_server.tools.analog.rendering.render_measurement",
+                side_effect=ImportError("matplotlib missing"),
+            ),
+        ):
+            result = measure(render_image=True)
+
+        assert isinstance(result, dict)
+        assert "error" in result
+        assert "matplotlib missing" in result["error"]
+
+
+class TestDigitalCaptureRenderImage:
+    def _make_mocks(self, samples: list[int] | None = None) -> tuple[MagicMock, MagicMock]:
+        if samples is None:
+            samples = [0xFF, 0x00, 0xAA]
+        dwf_mock = MagicMock()
+        device_mock = MagicMock()
+        la_mock = device_mock.digital_input
+        la_mock.read_status.return_value = dwf_mock.Status.DONE
+        la_mock.get_data.return_value.tolist.return_value = samples
+        manager_mock = _make_manager_mock(device_mock)
+        return manager_mock, dwf_mock
+
+    def test_default_returns_dict_unchanged(self) -> None:
+        manager_mock, dwf_mock = self._make_mocks()
+
+        with (
+            patch("dwf_mcp_server.tools.digital.dwf", dwf_mock),
+            patch("dwf_mcp_server.tools.digital.get_manager", return_value=manager_mock),
+        ):
+            result = digital_capture(channels=[0, 2])
+
+        assert isinstance(result, dict)
+        assert result["channels"] == [0, 2]
+
+    def test_render_image_true_returns_tool_result(self) -> None:
+        manager_mock, dwf_mock = self._make_mocks()
+
+        with (
+            patch("dwf_mcp_server.tools.digital.dwf", dwf_mock),
+            patch("dwf_mcp_server.tools.digital.get_manager", return_value=manager_mock),
+            patch(
+                "dwf_mcp_server.tools.digital.rendering.render_digital",
+                return_value=_FAKE_PNG,
+            ) as render_mock,
+        ):
+            result = digital_capture(channels=[0, 2], render_image=True)
+
+        assert isinstance(result, ToolResult)
+        sc = result.structured_content
+        assert sc["channels"] == [0, 2]
+        assert sc["samples"] == [5, 0, 0]  # mask 0b101 applied
+        assert len(result.content) == 1
+        assert result.content[0].mimeType == "image/png"
+        # renderer got demuxed (channels, samples, sample_rate)
+        args, _ = render_mock.call_args
+        assert args[0] == [0, 2]
+        assert args[1] == [5, 0, 0]
+
+    def test_render_failure_returns_error_dict(self) -> None:
+        manager_mock, dwf_mock = self._make_mocks()
+
+        with (
+            patch("dwf_mcp_server.tools.digital.dwf", dwf_mock),
+            patch("dwf_mcp_server.tools.digital.get_manager", return_value=manager_mock),
+            patch(
+                "dwf_mcp_server.tools.digital.rendering.render_digital",
+                side_effect=RuntimeError("render boom"),
+            ),
+        ):
+            result = digital_capture(render_image=True)
+
+        assert isinstance(result, dict)
+        assert "error" in result
+        assert "render boom" in result["error"]
+
+
+# ---------------------------------------------------------------------------
+# In-process FastMCP Client round-trip
+# Verifies that ToolResult survives the MCP serialization path — i.e. that
+# the dict + image dual-return actually produces ImageContent + structured_content.
+# ---------------------------------------------------------------------------
+
+
+class TestRenderImageRoundTrip:
+    def test_analog_capture_round_trip(self) -> None:
+        dwf_mock = MagicMock()
+        device_mock = MagicMock()
+        scope_mock = device_mock.analog_input
+        scope_mock.read_status.return_value = dwf_mock.Status.DONE
+        scope_mock.__getitem__.return_value.get_data.return_value.tolist.return_value = [
+            0.1,
+            0.2,
+            0.3,
+        ]
+        manager_mock = _make_manager_mock(device_mock)
+
+        # Build a minimal MCP server with just the analog tools registered.
+        mcp = FastMCP("rt-test")
+        analog_tools.register(mcp)
+
+        async def _run() -> None:
+            with (
+                patch("dwf_mcp_server.tools.analog.dwf", dwf_mock),
+                patch("dwf_mcp_server.tools.analog.get_manager", return_value=manager_mock),
+                patch(
+                    "dwf_mcp_server.tools.analog.rendering.render_analog",
+                    return_value=_FAKE_PNG,
+                ),
+            ):
+                async with Client(mcp) as client:
+                    result = await client.call_tool(
+                        "analog_capture",
+                        {
+                            "channel": 1,
+                            "sample_rate": 1000.0,
+                            "duration": 0.003,
+                            "render_image": True,
+                        },
+                    )
+
+            assert result.is_error is False
+            # Exactly one ImageContent block on the wire
+            kinds = [type(c).__name__ for c in result.content]
+            assert "ImageContent" in kinds
+            image = next(c for c in result.content if type(c).__name__ == "ImageContent")
+            assert image.mimeType == "image/png"
+            # structured_content carries the unchanged response dict
+            sc = result.structured_content
+            assert sc["channel"] == 1
+            assert sc["samples"] == [0.1, 0.2, 0.3]
+
+        asyncio.run(_run())

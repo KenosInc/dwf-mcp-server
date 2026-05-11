@@ -7,8 +7,24 @@ from typing import Literal
 
 import dwfpy as dwf
 from fastmcp import FastMCP
+from fastmcp.tools.tool import ToolResult
+from fastmcp.utilities.types import Image
 
+from dwf_mcp_server import rendering
 from dwf_mcp_server.session import get_manager
+
+
+def _image_tool_result(response: dict, png: bytes) -> ToolResult:
+    """Wrap a tool response dict + PNG into a ToolResult.
+
+    Returning a `ToolResult` (instead of a `(dict, Image)` tuple) preserves
+    `structured_content` on the wire — the tuple form drops it under
+    fastmcp 3.2.x because the second tuple slot is interpreted as the
+    structured payload.
+    """
+    image_content = Image(data=png, format="png").to_image_content()
+    return ToolResult(content=[image_content], structured_content=response)
+
 
 # Tracks the channel last used by analog_capture(action="start") and
 # generate_waveform(action="start"), keyed by device_index. Used to fill in
@@ -37,7 +53,8 @@ def analog_capture(
     buffer_size: int | None = None,
     action: Literal["single", "start", "read", "stop"] = "single",
     device_index: int = 0,
-) -> dict:
+    render_image: bool = False,
+) -> dict | ToolResult:
     """Capture analog waveform samples from an oscilloscope channel.
 
     The `action` parameter selects the capture lifecycle:
@@ -67,10 +84,15 @@ def analog_capture(
             Also overrides `duration`-derived buffer for `single`.
         action: Capture lifecycle action (default: "single").
         device_index: Device index (default: 0, the first device).
+        render_image: When True, also return a PNG plot of the captured samples
+            alongside the response dict (default: False). Only meaningful for
+            `single`/`read`; ignored for `start`/`stop`. Errors and start/stop
+            responses always return a plain dict.
 
     Returns:
-        For `single`/`read`: dict with `samples` (V floats) and metadata.
-        For `start`/`stop`: dict with `status` and configuration metadata.
+        Plain dict by default. When `render_image=True` and samples were
+        captured, a `ToolResult` carrying both the dict (as structured content)
+        and the PNG image.
     """
     try:
         device = get_manager().acquire(device_index)
@@ -97,13 +119,17 @@ def analog_capture(
             ch_idx = ch - 1
             scope.read_status(read_data=True)
             samples: list[float] = scope[ch_idx].get_data().tolist()
-            return {
+            response = {
                 "channel": ch,
                 "action": "read",
                 "sample_count": len(samples),
                 "unit": "V",
                 "samples": samples,
             }
+            if render_image:
+                png = rendering.render_analog(samples, sample_rate, voltage_range)
+                return _image_tool_result(response, png)
+            return response
 
         ch = channel if channel is not None else 1
         _validate_analog_channel(ch)
@@ -144,7 +170,7 @@ def analog_capture(
 
         samples = scope[ch_idx].get_data().tolist()
 
-        return {
+        response = {
             "channel": ch,
             "sample_rate": sample_rate,
             "duration": actual_duration,
@@ -152,6 +178,10 @@ def analog_capture(
             "unit": "V",
             "samples": samples,
         }
+        if render_image:
+            png = rendering.render_analog(samples, sample_rate, voltage_range)
+            return _image_tool_result(response, png)
+        return response
     except Exception as exc:  # noqa: BLE001
         get_manager().release(device_index)
         return {"error": str(exc)}
@@ -264,7 +294,8 @@ def measure(
     sample_rate: float = 1_000_000.0,
     duration: float = 0.01,
     device_index: int = 0,
-) -> dict:
+    render_image: bool = False,
+) -> dict | ToolResult:
     """Measure an electrical quantity using the oscilloscope.
 
     Single-shot measurement; for continuous observation use
@@ -277,6 +308,14 @@ def measure(
         sample_rate: Sampling rate in Hz (default: 1 MHz).
         duration: Measurement window in seconds (default: 10 ms).
         device_index: Device index (default: 0, the first device).
+        render_image: When True, also return a PNG plot of the measurement
+            window with annotations (default: False). The response dict
+            shape is unchanged either way; raw samples are not exposed.
+
+    Returns:
+        Plain dict by default. When `render_image=True` succeeds, a
+        `ToolResult` carrying the same dict (as structured content) plus
+        the PNG image. Errors always return a plain dict.
     """
     try:
         buffer_size = int(sample_rate * duration)
@@ -297,7 +336,11 @@ def measure(
         samples: list[float] = scope[ch_idx].get_data().tolist()
 
         value, unit = _compute_measurement(samples, measurement, sample_rate)
-        return {"channel": channel, "measurement": measurement, "value": value, "unit": unit}
+        response = {"channel": channel, "measurement": measurement, "value": value, "unit": unit}
+        if render_image:
+            png = rendering.render_measurement(samples, sample_rate, measurement, value)
+            return _image_tool_result(response, png)
+        return response
     except Exception as exc:  # noqa: BLE001
         get_manager().release(device_index)
         return {"error": str(exc)}
