@@ -2023,18 +2023,22 @@ class TestRenderingHelpers:
             with pytest.raises(RuntimeError, match="savefig boom"):
                 rendering.render_analog([0.1, 0.2, 0.3], 1e6, 5.0)
 
-    @pytest.mark.parametrize("bad_rate", [0, -1.0, -100.0])
-    def test_validation_rejects_non_positive_sample_rate(self, bad_rate: float) -> None:
-        with pytest.raises(ValueError, match="sample_rate must be > 0"):
+    @pytest.mark.parametrize(
+        "bad_rate", [0, -1.0, -100.0, float("nan"), float("inf"), float("-inf")]
+    )
+    def test_validation_rejects_invalid_sample_rate(self, bad_rate: float) -> None:
+        with pytest.raises(ValueError, match="sample_rate must be a finite positive number"):
             render_analog([0.1, 0.2, 0.3], sample_rate=bad_rate, voltage_range=5.0)
-        with pytest.raises(ValueError, match="sample_rate must be > 0"):
+        with pytest.raises(ValueError, match="sample_rate must be a finite positive number"):
             render_digital([0], [1, 0, 1], sample_rate=bad_rate)
-        with pytest.raises(ValueError, match="sample_rate must be > 0"):
+        with pytest.raises(ValueError, match="sample_rate must be a finite positive number"):
             render_measurement([0.1, 0.2], sample_rate=bad_rate, measurement="dc", value=0.0)
 
-    @pytest.mark.parametrize("bad_range", [0, -1.0, -5.0])
-    def test_validation_rejects_non_positive_voltage_range(self, bad_range: float) -> None:
-        with pytest.raises(ValueError, match="voltage_range must be > 0"):
+    @pytest.mark.parametrize(
+        "bad_range", [0, -1.0, -5.0, float("nan"), float("inf"), float("-inf")]
+    )
+    def test_validation_rejects_invalid_voltage_range(self, bad_range: float) -> None:
+        with pytest.raises(ValueError, match="voltage_range must be a finite positive number"):
             render_analog([0.1, 0.2, 0.3], sample_rate=1e6, voltage_range=bad_range)
 
     @pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])

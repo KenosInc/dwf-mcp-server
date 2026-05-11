@@ -37,14 +37,16 @@ def build_image_tool_result(response: dict, png: bytes) -> ToolResult:
 
 
 def _validate_sample_rate(sample_rate: float) -> None:
-    if not (sample_rate > 0):
-        msg = f"sample_rate must be > 0, got {sample_rate!r}"
+    # `not (x > 0)` already rejects NaN, but `inf` would pass the `> 0` check
+    # and propagate into matplotlib as a silently-broken time axis.
+    if not math.isfinite(sample_rate) or sample_rate <= 0:
+        msg = f"sample_rate must be a finite positive number, got {sample_rate!r}"
         raise ValueError(msg)
 
 
 def _validate_voltage_range(voltage_range: float) -> None:
-    if not (voltage_range > 0):
-        msg = f"voltage_range must be > 0, got {voltage_range!r}"
+    if not math.isfinite(voltage_range) or voltage_range <= 0:
+        msg = f"voltage_range must be a finite positive number, got {voltage_range!r}"
         raise ValueError(msg)
 
 
