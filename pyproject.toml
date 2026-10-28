@@ -6,7 +6,9 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 dependencies = [
-    "fastmcp>=3.2.0",
+    # fastmcp 3.4.10+ fixes GHSA-7xgj-8392-5q4r; 4.x moved fastmcp.tools.tool and
+    # needs a separate migration, so stay on the 3.x line for now.
+    "fastmcp>=3.4.10,<4",
     "dwfpy>=1.0",
     "matplotlib>=3.8",
 ]

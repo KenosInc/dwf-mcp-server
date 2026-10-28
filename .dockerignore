@@ -1,0 +1,20 @@
+# Keep the build context minimal: only what the Dockerfile COPYs is needed.
+# This also keeps local secrets (.env, .mcp.json) and VCS data out of the
+# builder layer and the GitHub Actions build cache.
+.git
+.github
+.devcontainer
+.claude
+.venv
+.env
+.env.*
+!.env.example
+.mcp.json
+Dockerfile.local
+docs
+tests
+captures
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.ruff_cache

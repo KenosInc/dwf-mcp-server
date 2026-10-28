@@ -58,7 +58,7 @@ First, build a derived image with the Adept 2 Runtime and WaveForms SDK — see
 [README](../README.md#installation).
 
 ```bash
-docker run -i --rm --privileged dwf-mcp-server
+docker run -i --rm --device=/dev/bus/usb dwf-mcp-server
 ```
 
 ## 5. Verify with list_devices MCP Tool
