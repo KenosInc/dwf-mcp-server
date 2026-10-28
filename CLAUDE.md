@@ -114,7 +114,8 @@ Docker image includes only their system-level dependencies (e.g. `libusb-1.0-0`)
   enumeration returns empty or hardware control is a no-op despite no errors).
 - **USB permissions** — Digilent devices default to `root:root 0664`. Either add a udev rule
   (`ATTRS{idVendor}=="1443", MODE="0666"`) or ensure the user is in the correct group.
-- **Docker `--privileged`** is required for USB access; the container's own `/etc/digilent-adept.conf`
+- **Docker USB access** — prefer `--device=/dev/bus/usb` (plus a host udev rule); `--privileged`
+  is the fallback only when that fails. The container's own `/etc/digilent-adept.conf`
   (installed by the Adept .deb) is sufficient — do NOT mount the host's Nix/distro-specific conf.
 
 ## Coding Conventions

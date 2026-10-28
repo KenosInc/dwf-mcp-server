@@ -70,7 +70,7 @@ docker build -f Dockerfile.dwf -t dwf-mcp-server .
 #### Claude Code
 
 ```bash
-claude mcp add dwf -- docker run -i --rm --privileged dwf-mcp-server
+claude mcp add dwf -- docker run -i --rm --device=/dev/bus/usb dwf-mcp-server
 ```
 
 #### Claude Desktop
@@ -84,7 +84,7 @@ Add to `claude_desktop_config.json`:
       "command": "docker",
       "args": [
         "run", "-i", "--rm",
-        "--privileged",
+        "--device=/dev/bus/usb",
         "dwf-mcp-server"
       ]
     }
@@ -92,7 +92,18 @@ Add to `claude_desktop_config.json`:
 }
 ```
 
-Pass `--privileged` so the container can access USB devices.
+`--device=/dev/bus/usb` exposes only the USB bus to the container (Linux hosts
+only — Docker Desktop on macOS/Windows cannot pass USB through). Make sure the
+host grants your user access to the device (udev rule
+`ATTRS{idVendor}=="1443", MODE="0666"`, see [host-setup](docs/host-setup.md)).
+Docker grants device nodes when the container is created, so plug the
+instrument in **before** starting it; if it is unplugged and reconnected later
+it comes back with a new device number that the running container cannot open —
+restart the container (or use `-v /dev/bus/usb:/dev/bus/usb
+--device-cgroup-rule='c 189:* rmw'` instead of `--device` to allow hotplug).
+Only fall back to `--privileged` if device access still fails; it hands the
+container full access to every host device and all capabilities, which is far
+more than an LLM-driven instrument controller should have.
 
 #### Project-level config (Claude Code)
 
