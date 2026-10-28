@@ -8,6 +8,8 @@
 .venv
 .env
 .env.*
+**/.env
+**/.env.*
 !.env.example
 .mcp.json
 Dockerfile.local
